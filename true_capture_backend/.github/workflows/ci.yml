@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB:       true_capture_test
+          POSTGRES_USER:     postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.x"
+
+      - run: dotnet restore src/TrueCapture.sln
+      - run: dotnet build   src/TrueCapture.sln --no-restore -c Release
+
+      - run: dotnet test src/TrueCapture.Tests.Arch        --no-build -c Release --logger "trx;LogFileName=arch.trx"
+      - run: dotnet test src/TrueCapture.Tests.Unit        --no-build -c Release --logger "trx;LogFileName=unit.trx"
+      - run: dotnet test src/TrueCapture.Tests.Integration --no-build -c Release --logger "trx;LogFileName=int.trx"
+        env:
+          ConnectionStrings__AppDb: "Host=localhost;Port=5432;Database=true_capture_test;Username=postgres;Password=postgres"
