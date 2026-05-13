@@ -20,7 +20,7 @@ class SignUpScreen extends ConsumerStatefulWidget {
 
 class _SignUpScreenState
     extends BaseConsumerState<SignUpScreen, SignUpViewModel> {
-  final _nameController = TextEditingController();
+  final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -28,7 +28,7 @@ class _SignUpScreenState
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -39,7 +39,7 @@ class _SignUpScreenState
     context.hideKeyboard();
     viewModel.signUp(
       context,
-      name: _nameController.text.trim(),
+      username: _usernameController.text.trim(),
       email: _emailController.text.trim(),
       password: _passwordController.text,
     );
@@ -63,11 +63,14 @@ class _SignUpScreenState
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       CustomInputField(
-                        controller: _nameController,
-                        label: 'Full name',
+                        controller: _usernameController,
+                        label: 'Username',
                         textInputAction: TextInputAction.next,
-                        validator: (v) =>
-                            (v == null || v.isEmpty) ? 'Required' : null,
+                        validator: (v) {
+                          if (v == null || v.isEmpty) return 'Required';
+                          if (v.length < 3) return 'At least 3 characters';
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
                       CustomInputField(

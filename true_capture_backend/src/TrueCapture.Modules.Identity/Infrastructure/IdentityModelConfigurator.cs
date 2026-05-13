@@ -82,5 +82,19 @@ public sealed class IdentityModelConfigurator : IEntityModelConfigurator
             e.HasOne(x => x.User).WithMany(u => u.RefreshTokens).HasForeignKey(x => x.UserId);
             e.Ignore(x => x.IsActive);
         });
+
+        b.Entity<OtpCode>(e =>
+        {
+            e.ToTable("OtpCode", schema: Schemas.Identity);
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Email).HasMaxLength(256).IsRequired();
+            e.Property(x => x.CodeHash).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Purpose).HasConversion<int>().IsRequired();
+            e.Property(x => x.RowVersion).IsConcurrencyToken();
+            e.HasIndex(x => new { x.Email, x.Purpose });
+            e.HasIndex(x => x.UserId);
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.SetNull);
+            e.Ignore(x => x.IsActive);
+        });
     }
 }

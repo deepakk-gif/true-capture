@@ -65,9 +65,10 @@ Stakeholders: Deepak (product + tech lead), editorial team (Fake-vs-Real authors
 **Why:** Single source of truth for what counts as a tag. Server can normalize (lowercase) and validate (length, allowed chars) once.
 **Alternative considered:** Client computes tag list, sends it alongside caption — rejected, lets malicious clients lie about indexed terms.
 
-### D8. Admin panel is auth-shared, role-gated
-**Decision:** The Next.js admin panel logs in against the same `/api/auth/login` endpoint; admin gating is `user.IsAdmin == true` (the existing flag on `User`). No separate admin auth surface. Admin endpoints live under `/api/admin/*` and require the `admin` permission.
-**Why:** One auth system. The `IsAdmin` flag already exists on `User`. Separate admin auth would be three more flows we don't need.
+### D8. Admin panel is auth-shared, role-gated, in its own Next.js app
+**Decision:** The admin panel is its own Next.js 15 app at `true_capture_admin_panel/`, distinct from the public web surface at `true_capture_web/`. It logs in against the same `/api/auth/login` endpoint; admin gating is `user.IsAdmin == true` (the existing flag on `User`). No separate admin auth surface. Admin endpoints live under `/api/admin/*` and require the `admin` permission. The public web surface (`true_capture_web/`) is **not** bootstrapped under this change.
+**Why:** One auth system. The `IsAdmin` flag already exists on `User`. Separate admin auth would be three more flows we don't need. Splitting the admin panel into its own folder keeps the public site's bundle small, lets the admin panel deploy on a non-public hostname (e.g., `admin.truecapture.app`) with stricter network rules, and avoids the "leak admin routes into the public app accidentally" risk that bundling creates.
+**Alternative considered:** Single Next.js app with route groups (`(public)` vs `(admin)`) — rejected to keep admin code physically separable and independently deployable.
 
 ### D9. Theme on mobile: stored locally, mirrored server-side
 **Decision:** Theme preference (`light` / `dark` / `system`) is stored in `SharedPreferences` for instant boot, and also PATCHed to `/api/users/me/settings` so a fresh install on a new device picks up the user's preference at login.
@@ -76,6 +77,24 @@ Stakeholders: Deepak (product + tech lead), editorial team (Fake-vs-Real authors
 ### D10. Fake-vs-Real tab is a filtered feed, not a separate entity
 **Decision:** Fake-vs-Real posts are rows in `posts` with `is_admin_post = true AND is_fake_vs_real = true`. The Fake-vs-Real tab calls the feed endpoint with a `?channel=fake_vs_real` filter. The admin "Fake-vs-Real composer" is just a post-create form with those two flags pre-set.
 **Why:** Same engagement primitives (like / comment / share / save) for free. No second pipeline to maintain. Posts can appear in both Feed and Fake-vs-Real without duplication.
+
+### D11. Pull-forward of Phase 3/5 admin features via lightweight backends
+**Decision:** Three admin capabilities originally scoped to later phases land in MVP via cheap implementations:
+- **Analytics dashboard** — read-only Postgres views over the existing tables (`users`, `posts`, `likes`, `comments`, `follows`, `media_assets`). No event stream, no warehouse, no aggregation pipeline. Charts render directly off the views with simple LIMIT/GROUP BY queries. Retention to be confirmed (OQ9).
+- **Broadcast / targeted announcements** — `admin_announcements` table; mobile polls `GET /api/me/announcements` (cursor-paginated, marks-as-read). No FCM/APNS. When push lands in Phase 3, announcements become a delivery channel rather than a polling target.
+- **Pre-publish approval queue** — `Post.Status = pending_review` for posts that match an `approval_policies` rule (e.g., author account age < 7 days, post contains a banned hashtag). Default path stays "publish immediately"; the queue is the exception, not the rule (see D12).
+**Why:** Editorial workflow needs these from day one (the entire product thesis is editorial trust), but real push and event-stream analytics are months of work each. The lightweight backends are weeks of work and meet MVP needs.
+**Trade-off:** Postgres-view analytics fall over past ~1M events/day; broadcast polling burns extra bandwidth. Both are explicitly stopgaps to be replaced when the proper Phase 3/5 infrastructure arrives. We pay for that switch with a future migration — acceptable.
+
+### D12. Approval queue is opt-in per-policy, not global
+**Decision:** A post enters `Status=pending_review` only when an `approval_policies` row matches (matching is server-side at post-create, after caption parsing). Default policy set in seed data: "new account < 7 days OR caption contains a banned hashtag". All other posts publish immediately (`Status=live`). Admins can edit the policy set via a small admin-panel screen.
+**Why:** Without this guardrail, gating every post slows time-to-publish for every user — which is the load-bearing UX of the entire app. Policy-driven gating gives admins a moderation lever without breaking the default flow.
+**Alternative considered:** Global pre-publish review — rejected as a UX nuclear option that the team wouldn't actually use.
+
+### D13. Sensitive-content veil is client-side, not server-side gating
+**Decision:** Posts with `Sensitive=true` are still returned by the feed and post endpoints with full media URLs. The mobile post-card renders the media inside a blur overlay with a "Show content" CTA; first-tap reveals the media for the current session on that device. The server does not strip URLs or refuse delivery.
+**Why:** Server-side blurring requires re-encoding every media asset — large cost. Client-side rendering keeps the bytes the same, lets admins toggle the flag without re-processing, and matches how Twitter / Instagram handle sensitive content today.
+**Trade-off:** A motivated client can ignore the veil and display the media unblurred. Acceptable — the veil is a UX warning, not access control. If a post is truly disallowed, an admin uses `Status=removed`, not `Sensitive=true`. OQ7 tracks per-session vs per-device reveal persistence.
 
 ## Risks / Trade-offs
 
@@ -86,7 +105,11 @@ Stakeholders: Deepak (product + tech lead), editorial team (Fake-vs-Real authors
 - **OTP delivery reliability** → Email-only OTP (no SMS fallback) for password reset means a user with a broken inbox is locked out. **Mitigation:** Accepted for MVP. Add admin "reset password for user" tool in admin panel as the escape hatch.
 - **Google OAuth on iOS** → Apple's policy may require Sign in with Apple alongside Google. **Mitigation:** Detect submission rejection in TestFlight; if blocked, add Apple Sign-In as a follow-up task before App Store submission. Out of scope until we hit it.
 - **Modular monolith discipline** → Without enforcement, modules will reach into each other's DbContext. **Mitigation:** ArchUnit-style test (or Roslyn analyzer) added in tasks that fails CI on cross-module entity references.
-- **No analytics** → We will not know if any of this works after launch. **Mitigation:** Accept for MVP; Phase 5 adds the dashboards. Log enough structured events server-side to reconstruct usage from Serilog if needed.
+- **Pulled-forward admin scope inflates MVP burn 30–50%** → Adding analytics, broadcasts, approval queue, taxonomy, exports, audit log, and restriction levels pushes MVP from 6–8 weeks to 8–12 weeks. **Mitigation:** all three pull-forward features (D11) use lightweight DB-backed implementations and explicit migration paths to the real Phase 3/5 infra. Each can be flag-gated off if a deadline forces it.
+- **Postgres-view analytics scale ceiling** → Views over raw tables stop being fast past ~1M events/day or ~100k DAU. **Mitigation:** acceptable for MVP success-metric targets (10k registered users, 100k uploads in 3 months per PRD §17). When approached, swap to materialised views, then to an event stream — that work is Phase 5.
+- **Sensitive-content veil is client-enforced only (D13)** → A motivated user can bypass it. **Mitigation:** veil is a warning, not access control; `Status=removed` is the real lever. Document this distinction in the admin panel UI so admins pick the right tool.
+- **Pre-publish queue UX risk (D12)** → If approval-policy rules are too broad, posting feels broken for affected users. **Mitigation:** seed the policy set conservatively (only "account age < 7 days" or "banned hashtag" by default); surface a "Your post is pending review" indicator in the mobile UI so the user understands the wait isn't a bug.
+- **No analytics retention story** → Without explicit pruning, view-backed metrics drift toward expensive queries. **Mitigation:** OQ9 tracks raw vs aggregate retention windows. Default proposal: 30-day raw, 1-year daily rollups.
 
 ## Migration Plan
 
@@ -106,3 +129,6 @@ There is no production data. Migration plan is the rollout sequence:
 - **OQ4:** Comment depth — PRD says "with replies" but does not specify depth. **Proposed:** One level of replies (Instagram-equivalent). Confirm with product before specs are sealed.
 - **OQ5:** Captcha provider — currently `[RequireCaptcha]` is wired but provider is unspecified in code. **Proposed:** Cloudflare Turnstile (already in the Cloudflare stack). Confirm with devops.
 - **OQ6:** Admin verification badge — granted manually for MVP or does any heuristic apply? **Proposed:** Manual only, granted via admin panel. No heuristic.
+- **OQ7:** Sensitive-content veil reveal persistence — first-tap unveils for the **current session only** (resets on app cold-start) or **per-device persistently** (until the user re-veils)? **Proposed:** session-only (safer default). Confirm with product.
+- **OQ8:** Broadcast notification audience selectors — MVP supports `all_users`, `by_activity_bucket` (active in last 7d / 30d / never), `single_user`. By-country is deferred. **Proposed:** confirm activity buckets and whether to add `by_signup_cohort`.
+- **OQ9:** Analytics view retention — raw events (where applicable) and aggregated rollups. **Proposed:** 30 days raw, 1 year of daily rollups. Confirm with devops + product before sealing.

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../screens/auth/forgot_password/forgot_password_view_model.dart';
 import '../screens/auth/otp/otp_view_model.dart';
+import '../screens/auth/reset_password/reset_password_view_model.dart';
 import '../screens/auth/sign_in/sign_in_viewmodel.dart';
 import '../screens/auth/sign_up/sign_up_view_model.dart';
 import '../screens/main/main_view_model.dart';
@@ -41,6 +42,11 @@ final otpViewModelProvider = Provider.autoDispose<OtpViewModel>((ref) {
     ref.read(authRepo),
     ref.read(authStateNotifierProvider.notifier),
   );
+});
+
+final resetPasswordViewModelProvider =
+    Provider.autoDispose<ResetPasswordViewModel>((ref) {
+  return ResetPasswordViewModel(ref.read(authRepo));
 });
 
 final mainVm = Provider.autoDispose<MainViewModel>((ref) {

@@ -42,6 +42,8 @@ case "$file" in
     emit "$ROOT/mobile_app_flow.md" "true_capture_app (Flutter)" "$rel" ;;
   "$ROOT"/true_capture_backend/src/*.cs|"$ROOT"/true_capture_backend/src/*appsettings*.json|"$ROOT"/true_capture_backend/src/*Program.cs)
     emit "$ROOT/backend_api_flow.md" "true_capture_backend (.NET)" "$rel" ;;
+  "$ROOT"/true_capture_admin_panel/*)
+    emit "$ROOT/admin_panel_flow.md" "true_capture_admin_panel (Next.js admin)" "$rel" ;;
   "$ROOT"/true_capture_web/*)
     emit "$ROOT/web_app_flow.md" "true_capture_web" "$rel" ;;
 esac

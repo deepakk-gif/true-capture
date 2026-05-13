@@ -5,6 +5,7 @@ import '../network/helper/error_handler.dart';
 import '../network/interceptors/auth_interceptor.dart';
 import '../network/interceptors/error_interceptor.dart';
 import '../network/interceptors/logging_interceptor.dart';
+import '../network/interceptors/refresh_interceptor.dart';
 import 'local_service.dart';
 
 class ApiService with NetworkParseHelper {
@@ -26,9 +27,11 @@ class ApiService with NetworkParseHelper {
       contentType: 'application/json',
       responseType: ResponseType.json,
     ));
+    final storage = LocalStorageService();
     _dio!.interceptors.addAll([
-      AuthInterceptor(LocalStorageService()),
+      AuthInterceptor(storage),
       LoggingInterceptor(),
+      RefreshInterceptor(_dio!, storage),
       ErrorInterceptor(),
     ]);
   }

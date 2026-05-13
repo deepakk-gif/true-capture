@@ -69,3 +69,18 @@ The Flutter mobile app SHALL render the signed-in user's profile under the Profi
 #### Scenario: Top app-bar avatar opens own profile
 - **WHEN** a signed-in user taps the avatar in the persistent top app bar
 - **THEN** the app navigates to the Profile tab
+
+### Requirement: Restriction state visible to the affected user
+The `users` table SHALL have `RestrictionLevel` (enum: `none`, `restricted`, `muted`, `suspended`; default `none`) and `RestrictionExpiresAtUtc` (nullable). `GET /api/users/me` SHALL include both fields. The mobile app SHALL render a banner on the Profile tab when `RestrictionLevel != 'none'` explaining the state and (if `RestrictionExpiresAtUtc` is set) the expiry date. Public profile views (`GET /api/users/{username}`) SHALL NOT expose these fields to other users.
+
+#### Scenario: Restricted user sees a banner
+- **WHEN** a user whose `RestrictionLevel='restricted'` opens their Profile tab
+- **THEN** a banner reads "Your account is restricted: you can read posts but cannot post or comment" and persists until the admin clears the restriction
+
+#### Scenario: Suspended user with expiry
+- **WHEN** a user whose `RestrictionLevel='suspended'` with `RestrictionExpiresAtUtc` set 5 days in the future opens the app
+- **THEN** sign-in is blocked at `/api/auth/login` with reason `account_suspended` until the expiry passes
+
+#### Scenario: Public profile hides restriction state
+- **WHEN** any user other than the subject GETs `/api/users/{username}`
+- **THEN** the response does NOT include `restrictionLevel` or `restrictionExpiresAtUtc`

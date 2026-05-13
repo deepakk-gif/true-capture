@@ -12,6 +12,14 @@ public sealed class PermissionPolicyProvider(IOptions<AuthorizationOptions> opti
         var existing = await base.GetPolicyAsync(policyName);
         if (existing is not null) return existing;
 
+        if (string.Equals(policyName, "admin", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .RequireRole("Admin")
+                .Build();
+        }
+
         if (policyName.StartsWith(RequirePermissionAttribute.PolicyPrefix, StringComparison.Ordinal))
         {
             var code = policyName[RequirePermissionAttribute.PolicyPrefix.Length..];

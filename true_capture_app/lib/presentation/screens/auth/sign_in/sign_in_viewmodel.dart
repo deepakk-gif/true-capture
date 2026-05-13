@@ -41,12 +41,17 @@ class SignInViewModel extends BaseViewModel with AuthMixin {
     BuildContext context,
     SocialUserType type,
   ) async {
-    await signInWithSocial(
-      socialType: type,
-      onSuccess: () {
-        if (!context.mounted) return;
-        AppRouter.go(context, ScreenPath.routeMain);
-      },
-    );
+    await executeWithLoading(operation: () async {
+      await signInWithSocial(
+        socialType:        type,
+        authRepository:    _authRepository,
+        authStateNotifier: _authStateNotifier,
+        context:           context,
+        onSuccess: () {
+          if (!context.mounted) return;
+          AppRouter.go(context, ScreenPath.routeMain);
+        },
+      );
+    });
   }
 }

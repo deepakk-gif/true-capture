@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../constants/api_endpoints.dart';
 import '../../presentation/screens/auth/forgot_password/forgot_password_screen.dart';
 import '../../presentation/screens/auth/otp/otp_verify_screen.dart';
+import '../../presentation/screens/auth/reset_password/reset_password_screen.dart';
 import '../../presentation/screens/auth/sign_in/sign_in_screen.dart';
 import '../../presentation/screens/auth/sign_up/sign_up_screen.dart';
 import '../../presentation/screens/intro/intro_screen.dart';
@@ -20,6 +22,7 @@ class ScreenPath {
   static const String routeSignUp = '/sign-up';
   static const String routeForgotPassword = '/forgot-password';
   static const String routeOtpVerify = '/otp-verify';
+  static const String routeResetPassword = '/reset-password';
   static const String routeMain = '/main';
 }
 
@@ -76,7 +79,22 @@ class AppRouter {
           return animatedPage(
             key: state.pageKey,
             child: OtpVerifyScreen(
+              email:   args['email']   as String? ?? '',
+              purpose: args['purpose'] as OtpPurpose? ?? OtpPurpose.verifyEmail,
+            ),
+            animationType: AnimationType.slideRight,
+          );
+        },
+      ),
+      GoRoute(
+        path: ScreenPath.routeResetPassword,
+        pageBuilder: (context, state) {
+          final args = state.extra as Map<String, dynamic>? ?? const {};
+          return animatedPage(
+            key: state.pageKey,
+            child: ResetPasswordScreen(
               email: args['email'] as String? ?? '',
+              code:  args['code']  as String? ?? '',
             ),
             animationType: AnimationType.slideRight,
           );

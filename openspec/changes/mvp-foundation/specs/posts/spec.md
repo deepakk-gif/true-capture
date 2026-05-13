@@ -67,6 +67,30 @@ The authenticated user SHALL be able to delete their own post via `DELETE /api/p
 - **WHEN** a user DELETEs a post they did not author and they are not an admin
 - **THEN** the system returns `403 Forbidden`
 
+### Requirement: Post status and sensitivity
+The `posts` table SHALL have:
+- `Status` enum column with values `live`, `pending_review`, `rejected`, `removed`; default `live`.
+- `Sensitive BOOLEAN NOT NULL DEFAULT false`.
+- `RemovalReason TEXT NULL`, populated when `Status='removed'` or `Status='rejected'`.
+
+Posts SHALL only be inserted with `Status='pending_review'` when at least one row in `approval_policies` matches the create request (see admin-panel spec). All other create paths SHALL insert with `Status='live'`. Only admins may transition `Status` after creation.
+
+#### Scenario: Default create is live
+- **WHEN** a user with account age ≥ 7 days posts with a caption that does not match any approval policy
+- **THEN** the post is inserted with `Status='live'`
+
+#### Scenario: Policy match enters review
+- **WHEN** a user matches an approval policy at post-create
+- **THEN** the post is inserted with `Status='pending_review'` and is not visible in any non-admin feed read
+
+#### Scenario: Sensitive flag toggled by admin
+- **WHEN** an admin PATCHes `/api/admin/posts/{id}` with `{ sensitive: true }`
+- **THEN** `Post.Sensitive` becomes `true`; the post is still returned by every feed it would otherwise be in
+
+#### Scenario: Rejected post visible only to author and admins
+- **WHEN** a post with `Status='rejected'` is requested via `GET /api/posts/{id}`
+- **THEN** the API returns the post DTO with `status='rejected'` and `removalReason` set if the caller is the author or an admin; otherwise it returns `404 Not Found`
+
 ### Requirement: Mobile post card renders required primitives
 The mobile post card SHALL render: author avatar + username (tap → author profile), media (with carousel indicator when `kind=carousel` and auto-play on view when `kind=video`), action row with Like / Comment / Share each showing counts, a right-aligned Save button, caption with clickable `#hashtag` and `@mention` tokens, and a relative post time formatted as: `< 60s` → `Just now`, `< 60m` → `Nm ago`, `< 24h` → `Nh ago`, `< 7d` → `Nd ago`, `< 52w` → `Nw ago`, else `Ny ago`.
 
@@ -81,3 +105,14 @@ The mobile post card SHALL render: author avatar + username (tap → author prof
 #### Scenario: Relative time formatting
 - **WHEN** a post was created 3 hours ago
 - **THEN** the post card displays `3h ago`
+
+### Requirement: Mobile renders sensitive-content veil
+When the post DTO has `sensitive=true`, the mobile post card SHALL render the media inside a tap-to-reveal blur overlay with a "Show content" CTA. First tap SHALL reveal the media for the current session only — relaunching the app SHALL re-apply the veil.
+
+#### Scenario: Veil on sensitive post
+- **WHEN** the feed contains a post with `sensitive=true`
+- **THEN** the card shows the post's metadata (author, caption, counters) unmodified and renders the media area as a blurred placeholder with "Show content"
+
+#### Scenario: Reveal lasts the session
+- **WHEN** the user taps "Show content" on a sensitive post and scrolls away then back
+- **THEN** the media remains revealed; on next app cold-start the veil re-applies

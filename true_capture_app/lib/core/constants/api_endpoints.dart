@@ -1,22 +1,32 @@
 class ApiEndpoints {
   ApiEndpoints._();
 
-  // Auth
-  static const String signIn = '/auth/sign-in';
-  static const String signUp = '/auth/sign-up';
-  static const String signOut = '/auth/sign-out';
-  static const String socialLogin = '/auth/social-login';
-  static const String forgotPassword = '/auth/forgot-password';
-  static const String resetPassword = '/auth/reset-password';
-  static const String sendOtp = '/auth/send-otp';
-  static const String verifyOtp = '/auth/verify-otp';
-  static const String refreshToken = '/auth/refresh-token';
+  // Auth — aligned with backend AuthController routes under `/api/auth`.
+  static const String register       = '/api/auth/register';
+  static const String login          = '/api/auth/login';
+  static const String refresh        = '/api/auth/refresh';
+  static const String logout         = '/api/auth/logout';
+  static const String sendOtp        = '/api/auth/send-otp';
+  static const String verifyOtp      = '/api/auth/verify-otp';
+  static const String forgotPassword = '/api/auth/forgot-password';
+  static const String resetPassword  = '/api/auth/reset-password';
+  static const String google         = '/api/auth/google';
 
   // User
-  static const String userProfile = '/user/profile';
-  static const String updateProfile = '/user/profile';
-  static const String uploadAvatar = '/user/avatar';
+  static const String userProfile  = '/api/users/me';
+  static const String updateProfile = '/api/users/me';
+  static const String uploadAvatar = '/api/users/me/avatar';
 
   // Common
-  static const String registerFcmToken = '/notifications/register-token';
+  static const String registerFcmToken = '/api/notifications/register-token';
+}
+
+/// OTP purpose discriminator. Must match the backend `OtpPurpose` enum
+/// (1 = VerifyEmail, 2 = PasswordReset).
+enum OtpPurpose {
+  verifyEmail(1),
+  passwordReset(2);
+
+  const OtpPurpose(this.wireValue);
+  final int wireValue;
 }

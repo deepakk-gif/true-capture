@@ -14,6 +14,7 @@
 | Cache | Redis |
 | Media / AI Processing | Python FastAPI service |
 | Web Platform | Next.js 15 (SEO + speed) |
+| Web Admin | Next.js 15 (separate app — operational console) |
 | CDN | Cloudflare |
 | Storage | AWS S3 / Cloudflare R2 |
 
@@ -75,18 +76,20 @@ True Capture answers that question — both algorithmically (trust scoring) and 
 
 ## 5. Application Surfaces
 
-True Capture ships on three surfaces. Each lives in its own folder:
+True Capture ships on **four** surfaces. Each lives in its own folder:
 
 | Surface | Folder | Purpose |
 |---|---|---|
 | Mobile app | `true_capture_app/` | Primary consumer experience (Flutter, iOS + Android) |
 | Backend API | `true_capture_backend/` | .NET 9 Web API serving all clients |
-| Web platform | `true_capture_web/` | Next.js 15 — SEO landing, public post pages, admin panel |
+| Public web | `true_capture_web/` | Next.js 15 — SEO landing, public post pages (no admin) |
+| Admin panel | `true_capture_admin_panel/` | Next.js 15 — operational admin console (moderation, analytics, notifications, CMS, contact, taxonomy, exports, audit) |
 
 Module/flow change tracking lives in:
 - `mobile_app_flow.md`
 - `backend_api_flow.md`
 - `web_app_flow.md`
+- `admin_panel_flow.md`
 
 ---
 
@@ -256,12 +259,22 @@ Detects:
 
 Libraries: OpenCV, TensorFlow / PyTorch, InsightFace.
 
-### Module 11 — Admin Panel (Web)
-- User moderation, post moderation, ban system
-- AI review queue
-- **Fake vs Real composer** — first-class workflow for the editorial team to publish to Tab 2
-- CMS page editor (powers Profile → CMS pages)
-- Contact Us inbox
+### Module 11 — Admin Panel (Web — `true_capture_admin_panel/`)
+First-class operational console used by the platform team. Lives in its own Next.js 15 app, separate from the public web surface, and shares backend auth (a user with `IsAdmin=true` can sign in).
+
+Responsibilities:
+- **User moderation** — ban, unban, **restrict** (read-only / cannot post), **mute** (hidden from non-followers), **suspend** (cannot login for N days), verify badge, revoke badge
+- **Content moderation** — hide (reversible), **remove** (hard-delete + audit), **veil as sensitive** (tap-to-reveal blur on mobile), Fake-vs-Real composer
+- **Pre-publish approval queue** — policy-driven; certain posts (e.g., from new accounts) enter `pending_review` instead of going live; admin approves or rejects with reason
+- **User analytics dashboard** — DAU/WAU, signups by day, posts and uploads by day, top creators by follower delta, Fake-vs-Real reach. MVP impl is read-only Postgres views; no event stream yet.
+- **Broadcast / targeted notifications** — admin composes an announcement (title + body + optional CTA URL), picks audience (all users, by activity bucket — country filter deferred), stored in `admin_announcements`. Mobile polls until Phase 3 push lands.
+- **Admin-to-user email send** — composer (subject + body) → single user or all users; dispatched via the same `IEmailSender` used for OTP; per-admin rate limit
+- **Taxonomy / hashtag management** — banned hashtags (filtered from search, rejected at post-create) and featured hashtags (surface on explore later)
+- **CMS page editor** — manages `cms_pages` (About, ToS, Privacy, Community Guidelines)
+- **Contact Us inbox** — triage tickets through `open → in_progress → resolved | spam`
+- **Data exports** — per-user JSON export of account + posts + media URLs + comments (support / GDPR-style requests)
+- **Audit log** — every admin mutation writes a row to `admin_audit_log` (admin id, action, target, payload snapshot, timestamp); viewable in the panel
+- **AI review queue** — placeholder UI in MVP; populated once the Phase 4 AI engine lands
 
 ### Module 12 — Content Moderation
 Auto + manual review for: NSFW, violence, hate speech, spam.
@@ -274,6 +287,16 @@ Auto + manual review for: NSFW, violence, hate speech, spam.
 
 ### Module 14 — Analytics
 DAU, retention, watch time, upload success rate, trust-score distribution, Fake-vs-Real reach.
+
+### Module 15 — Admin Console Infrastructure
+Cross-cutting backing tables and services that power Module 11:
+- `admin_audit_log` — append-only mutation history
+- `admin_announcements` — broadcast / targeted announcements polled by the mobile app
+- `banned_hashtags`, `featured_hashtags` — taxonomy controls
+- `User.RestrictionLevel`, `User.RestrictionExpiresAtUtc` — restriction state
+- `Post.Status` (`live | pending_review | rejected | removed`), `Post.Sensitive` — moderation state
+- Reuses `IEmailSender` from Module 1 for admin-driven emails
+- Depends on Notifications module (Module 7) for delivery once Phase 3 push lands; MVP uses DB-polled announcements
 
 ---
 
@@ -337,7 +360,7 @@ DAU, retention, watch time, upload success rate, trust-score distribution, Fake-
 
 ## 12. Phase-wise Plan
 
-### Phase 1 — MVP (6–8 weeks)
+### Phase 1 — MVP (8–12 weeks — expanded admin scope)
 - Auth (email + Google)
 - Profile
 - In-app camera + post creation (photo, multi-photo, video)
@@ -345,7 +368,19 @@ DAU, retention, watch time, upload success rate, trust-score distribution, Fake-
 - Fake vs Real tab (admin posts)
 - Like / comment / share / save
 - Profile tab with settings, theme, CMS pages, Contact Us
-- Basic admin panel (user mod + Fake-vs-Real composer)
+- **Operational admin panel** (separate `true_capture_admin_panel/` app):
+  - Moderation (ban / restrict / mute / suspend / verify; hide / remove / sensitive-veil)
+  - Fake-vs-Real composer
+  - Pre-publish approval queue (policy-driven)
+  - User analytics dashboard (Postgres-view-backed)
+  - Broadcast / targeted announcements (DB-polled on mobile until push lands)
+  - Admin-to-user email send
+  - Taxonomy management (banned + featured hashtags)
+  - CMS page editor + Contact inbox
+  - Per-user data export
+  - Audit log
+
+> **Scope note:** Analytics (originally Phase 5) and broadcast notifications (originally Phase 3 delivery) are pulled forward into MVP via lightweight DB-polled implementations. Estimated MVP burn is 30–50% higher than the original "basic admin panel" target. Push (FCM/APNS), AI review, and event-stream analytics remain in their later phases.
 
 ### Phase 2 — Trust Infrastructure (4–6 weeks)
 - Capture metadata + device fingerprinting
@@ -377,14 +412,18 @@ DAU, retention, watch time, upload success rate, trust-score distribution, Fake-
 
 ```
 true-capture/
-├── true_capture_app/        # Flutter mobile app
-├── true_capture_backend/    # .NET 9 Web API
-├── true_capture_web/        # Next.js 15 web + admin
-├── prd.md                   # this document
-├── mobile_app_flow.md       # auto-updated when mobile modules change
-├── backend_api_flow.md      # auto-updated when backend modules change
-└── web_app_flow.md          # auto-updated when web modules change
+├── true_capture_app/          # Flutter mobile app
+├── true_capture_backend/      # .NET 9 Web API
+├── true_capture_web/          # Next.js 15 — public SEO + post pages (no admin)
+├── true_capture_admin_panel/  # Next.js 15 — operational admin console
+├── prd.md                     # this document
+├── mobile_app_flow.md         # auto-updated when mobile modules change
+├── backend_api_flow.md        # auto-updated when backend modules change
+├── web_app_flow.md            # auto-updated when public web modules change
+└── admin_panel_flow.md        # auto-updated when admin panel modules change
 ```
+
+> Each `*_flow.md` doc is auto-maintained via a Claude Code PostToolUse hook at `.claude/hooks/flow_doc_reminder.sh`. When source files under a tracked surface are edited, the hook nudges the assistant to update the corresponding flow doc. Adding a new surface requires adding a case arm in that script.
 
 ---
 

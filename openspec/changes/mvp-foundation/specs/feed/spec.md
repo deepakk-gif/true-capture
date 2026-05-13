@@ -59,6 +59,21 @@ The system SHALL expose `GET /api/feed?channel=fake_vs_real` returning posts whe
 - **WHEN** a non-admin user POSTs `/api/posts` with `is_fake_vs_real=true`
 - **THEN** the system returns `403 Forbidden` (see posts capability)
 
+### Requirement: Only `Status='live'` posts appear in non-admin feeds
+Every feed read (Feed tab, Fake-vs-Real tab, profile posts grid) SHALL filter `Status='live'` when the caller is not an admin and not the author. Posts with `Status` in (`pending_review`, `rejected`, `removed`) SHALL be excluded.
+
+#### Scenario: Pending-review post hidden
+- **WHEN** a non-author user fetches a feed that would otherwise include a post with `Status='pending_review'`
+- **THEN** the post is excluded from the response
+
+#### Scenario: Author sees own pending-review post on their profile
+- **WHEN** the author fetches `GET /api/users/me/posts` and they have a `pending_review` post
+- **THEN** the post is included with `status='pending_review'` so the mobile UI can show "Your post is awaiting review"
+
+#### Scenario: Removed post hidden everywhere
+- **WHEN** any non-admin caller would otherwise see a `Status='removed'` post
+- **THEN** the post is excluded; only admin endpoints surface removed posts
+
 ### Requirement: Mobile renders Feed and Fake-vs-Real tabs
 The mobile app's Home shell SHALL be a bottom-tab container with a persistent top app bar (left: profile avatar; right: chat button) and four tabs in order: Feed, Fake vs Real, Create Post, Profile. Tabs 1 and 2 SHALL render lists of post cards using the feed endpoint with and without the `channel=fake_vs_real` filter respectively.
 

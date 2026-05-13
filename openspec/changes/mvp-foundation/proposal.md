@@ -14,10 +14,15 @@ True Capture is a trust-first social platform whose differentiator is its admin-
 - Add engagement: like, comment (with one level of replies), share, save.
 - Add server-driven CMS pages (About, ToS, Privacy, Community Guidelines) and a Contact Us form that creates backend tickets.
 - Add app settings on mobile: theme (light/dark/system), notification preference storage, privacy toggles, logout.
-- Add a basic Next.js 15 admin panel covering user moderation, post moderation/ban, the Fake-vs-Real composer, the CMS page editor, and the Contact Us inbox.
+- Split the web surface in two: keep `true_capture_web/` as the public SEO site (out of MVP scope after the split) and stand up a **new** `true_capture_admin_panel/` Next.js 15 app dedicated to the operational admin console.
+- Add an **operational** admin panel under `true_capture_admin_panel/` covering: user moderation (ban / **restrict** / **mute** / **suspend** / verify); content moderation (hide / **remove** / **sensitive-veil**); Fake-vs-Real composer; **pre-publish approval queue** (policy-driven); **user analytics dashboard** (Postgres-view-backed); **broadcast / targeted announcements** (DB-polled by mobile until push lands); **admin-to-user email send**; **taxonomy / hashtag management** (banned + featured); CMS page editor; Contact Us inbox; **per-user data export**; **admin audit log**.
+- Add backing schema and modules to support the expanded admin scope: `User.RestrictionLevel`, `User.RestrictionExpiresAtUtc`; `Post.Status` (`live | pending_review | rejected | removed`), `Post.Sensitive`; `admin_announcements`, `admin_audit_log`, `banned_hashtags`, `featured_hashtags`; `approval_policies`.
+- Mobile: render `Post.Sensitive` posts with a tap-to-reveal blur overlay; poll `/api/me/announcements` to surface admin broadcasts in-app; respect `Post.Status` (only `live` posts in non-author feed reads); render a restriction banner on profile for the affected user.
 - **BREAKING** (internal, pre-launch): mobile `ApiEndpoints` paths change from `/auth/sign-in` style to `/api/auth/login` style; existing local dev tokens will be invalidated.
 
-Out of scope for this change (tracked for later phases): trust scoring, watermarking, device-fingerprint validation, AI/deepfake detection, NSFW auto-moderation, push notifications (FCM/APNS), 1-to-1 chat (SignalR), search, trending algorithm, analytics dashboards, monetization.
+Out of scope for this change (tracked for later phases): trust scoring, watermarking, device-fingerprint validation, AI/deepfake detection, NSFW auto-moderation, push notifications via FCM/APNS (replaced for MVP by DB-polled `admin_announcements`), 1-to-1 chat (SignalR), full search, trending algorithm, event-stream analytics infra (replaced for MVP by Postgres views), monetization, public SEO site at `true_capture_web/` (deferred — folder is reserved but not bootstrapped under this change).
+
+**Scope note:** pulling analytics (originally Phase 5) and broadcast announcements (originally Phase 3) into MVP via lightweight DB-backed implementations grows the MVP burn estimate to **8–12 weeks** (vs. the PRD's original 6–8). Push delivery, AI review, and event-stream analytics remain in their later phases.
 
 ## Capabilities
 
@@ -30,7 +35,7 @@ Out of scope for this change (tracked for later phases): trust scoring, watermar
 - `engagement`: Like (toggle), comment with one level of replies, share (records share event + returns share URL), save/unsave; counters denormalized on the post.
 - `cms-and-contact`: Server-driven CMS pages (About, Terms of Service, Privacy Policy, Community Guidelines) rendered from `cms_pages`; Contact Us form that writes to `contact_messages`.
 - `app-settings`: Theme (light / dark / system) persisted locally and synced to server; notification-preference flags stored server-side (no delivery yet); privacy toggles; logout endpoint integration.
-- `admin-panel`: Next.js 15 admin surface providing user moderation (ban / unban / verify), post moderation (hide / delete), the Fake-vs-Real composer (publishes posts with `is_admin_post = true, is_fake_vs_real = true`), CMS page editor, and Contact Us inbox triage. Restricted to users with `IsAdmin = true`.
+- `admin-panel`: Operational admin console hosted under `true_capture_admin_panel/` (Next.js 15, separate from the public web surface). Covers: user moderation (ban / unban / restrict / mute / suspend / verify); content moderation (hide / remove / sensitive-veil / Fake-vs-Real composer); pre-publish approval queue (policy-gated `Post.Status=pending_review`); user analytics dashboard (Postgres-view-backed — DAU/WAU, signups, posts, top creators, FvR reach); broadcast and targeted announcements (`admin_announcements`, polled by mobile); admin-to-user email send (reuses `IEmailSender`); taxonomy and hashtag management; CMS page editor; Contact Us inbox; per-user data export; append-only `admin_audit_log` written on every admin mutation. Restricted to users with `IsAdmin = true`.
 
 ### Modified Capabilities
 - (none — no specs exist yet)
@@ -39,8 +44,9 @@ Out of scope for this change (tracked for later phases): trust scoring, watermar
 
 - **Backend** (`true_capture_backend/`): new modules — `User`, `Media`, `Posts`, `Feed`, `Engagement`, `Cms`, `Admin`; extensions to existing `Identity` module for OTP, password reset, and Google OAuth; new EF migrations for `users` extensions, `follows`, `posts`, `post_media`, `post_hashtags`, `post_mentions`, `comments`, `likes`, `saves`, `shares`, `cms_pages`, `contact_messages`, `media_assets`; Redis dependency wired into composition root.
 - **Mobile** (`true_capture_app/`): rename auth endpoints in `core/constants/api_endpoints.dart`; wire `AuthMixin.signInWithSocial` to the Google flow; add `presentation/screens/{main,feed,fake_vs_real,create,profile}` screens; in-app camera + composer; post card primitives; theme provider; CMS page renderer; settings screens.
-- **Web** (`true_capture_web/`): bootstrap Next.js 15 app; auth-gated admin routes; user/post moderation tables; Fake-vs-Real composer; CMS editor; Contact Us inbox.
+- **Admin panel** (`true_capture_admin_panel/` — NEW folder): bootstrap Next.js 15 (App Router, TypeScript, server components default); HTTP-only cookie auth against `/api/auth/login`; middleware that 403s non-admins; sidebar layout; pages for Users, Posts, Approval Queue, Fake vs Real, Analytics, Announcements, Email, Taxonomy, CMS, Contact, Audit Log.
+- **Public web** (`true_capture_web/`): folder retained but **not bootstrapped under this change** — SEO landing and public post pages are deferred. Will be addressed in a future OpenSpec change.
 - **Infrastructure**: S3 / Cloudflare R2 bucket with signed URLs; Redis instance; HLS transcoding worker (FFmpeg-based); Cloudflare CDN in front of media; SMTP provider for OTP + password reset email.
 - **External dependencies**: Google OAuth client credentials; captcha provider (already wired via `[RequireCaptcha]`); email provider; object storage credentials.
-- **Flow docs**: `mobile_app_flow.md`, `backend_api_flow.md`, and `web_app_flow.md` must be updated for every module landed under this change.
+- **Flow docs**: `mobile_app_flow.md`, `backend_api_flow.md`, and `admin_panel_flow.md` must be updated for every module landed under this change. `web_app_flow.md` remains empty (public web deferred). The `.claude/hooks/flow_doc_reminder.sh` PostToolUse hook routes admin-panel file changes to `admin_panel_flow.md`.
 - **Performance budgets**: feed load < 2 s (cached), upload start < 1 s, app cold start < 3 s — must be measured before this change is marked complete.
