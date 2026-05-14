@@ -40,13 +40,15 @@ Also exports `enum OtpPurpose { verifyEmail(1), passwordReset(2) }` — the wire
 ### Request DTOs (`network/dto/request/auth/`)
 | File | Maps to backend DTO |
 |---|---|
-| `sign_in_request.dart` | `LoginDto(Email, Password)` |
-| `sign_up_request.dart` | `RegisterDto(Email, Username, Password)` — `name`/`phone` removed |
-| `otp_request.dart` | `OtpSendRequest(Email, Purpose)` + `VerifyOtpAndIssueDto(Email, Code, Purpose)` — was `otp` field; now `code` + `purpose` |
+| `sign_in_request.dart` | `LoginDto(Email, Password, FcmToken?, DeviceType?)` — optional `fcmToken` + `deviceType` for FCM registration |
+| `sign_up_request.dart` | `RegisterDto(Email, Username, Password, FcmToken?, DeviceType?)` — same optionals |
+| `otp_request.dart` | `OtpSendRequest(Email, Purpose)` + `VerifyOtpAndIssueDto(Email, Code, Purpose, FcmToken?, DeviceType?)` |
 | `forgot_password_request.dart` | `ForgotPasswordDto(Email)` |
 | `reset_password_request.dart` | `ResetPasswordDto(Email, Code, NewPassword)` |
-| `google_sign_in_request.dart` | `GoogleSignInDto(IdToken)` — replaces the generic `social_login_request.dart` for Google |
-| `refresh_token_request.dart` | `RefreshDto(RefreshToken)` — used for both `/refresh` and `/logout` |
+| `google_sign_in_request.dart` | `GoogleSignInDto(IdToken, FcmToken?, DeviceType?)` |
+| `refresh_token_request.dart` | `RefreshDto(RefreshToken, FcmToken?, DeviceType?)` — used for both `/refresh` and `/logout`. On logout, `fcmToken` triggers backend removal of that `UserDevice` row + topic unsubscribe. |
+
+All FCM-related fields use camelCase keys (`fcmToken`, `deviceType`) to match the backend's default `JsonSerializerDefaults.Web` policy.
 
 ### Response DTO (`network/dto/response/auth/auth_response.dart`)
 - Reads camelCase fields (`accessToken`, `refreshToken`, `accessExpiresAtUtc`) emitted by ASP.NET Core's default `JsonSerializerDefaults.Web`. Snake-case fallback preserved for transition.
@@ -89,7 +91,7 @@ All methods now hit the canonical paths via the matching DTOs:
 1. `SignInScreen` Google button → `SignInViewModel.signInWithProvider(context, SocialUserType.google)`.
 2. `AuthMixin.signInWithSocial(socialType, authRepository, authStateNotifier, context, onSuccess, onError)` (`mixin/auth_mixin.dart`) — orchestrates the full flow.
 3. `SocialLoginService.instance.signIn(SocialUserType.google)` (`services/social_login_service.dart`) — runs `google_sign_in` 6.x: `GoogleSignIn(['email','profile','openid']).signIn()` → `account.authentication.idToken` → returns `SocialLoginResult { provider, idToken, email, name }`.
-4. `AuthRepository.googleSignIn(GoogleSignInRequest(idToken))` → `POST /api/auth/google`.
+4. `AuthRepository.googleSignIn(GoogleSignInRequest(idToken, fcmToken, deviceType))` → `POST /api/auth/google`. The Google view-model passes the cached FCM token + device type through `AuthMixin.signInWithSocial(storage: …)` so the backend registers the device + subscribes it to `"all"` in the same call.
 5. `AuthStateNotifier.saveToken(access, refresh) + setUser(user)`.
 6. `AppRouter.go(routeMain)`.
 
@@ -160,8 +162,14 @@ Interceptor order inside `ApiService.initialize()`:
 → `OtpViewModel.resend(email)`
 → `AuthRepository.sendOtp(OtpSendRequest)` → `POST /auth/send-otp`.
 
-**Sign Out** (wired in repo, not yet exposed as a UI flow)
-→ `AuthRepository.signOut()` → `POST /auth/sign-out`.
+**Sign Out** — `TabSettings` "Sign out" tile (`presentation/screens/main/tabs/tab_settings/tab_settings.dart`)
+→ reads `StorageKeys.refreshTokenKey` + `StorageKeys.fcmTokenKey` from secure storage
+→ `AuthRepository.signOut(RefreshTokenRequest(refreshToken, fcmToken))` → `POST /api/auth/logout` (best-effort try/catch)
+→ `SocialLoginService.signOut()` (Google sign-out)
+→ deletes `StorageKeys.fcmTokenKey`
+→ `AuthStateNotifier.clear()` → `AppRouter.go(routeSignIn)`.
+
+Backend-side, the `fcmToken` on the logout payload triggers `IUserDeviceService.RemoveAsync(userId, fcmToken)` which unsubscribes the token from `"all"` and deletes the matching `UserDevice` row.
 
 ### Notes / TODO
 
@@ -171,8 +179,37 @@ Interceptor order inside `ApiService.initialize()`:
 
 ---
 
+## Notifications / FCM — IN PROGRESS
+
+Adds push-notification support. Plumbing already present: `firebase_core ^3.4.0` + `firebase_messaging ^15.1.1` in `pubspec.yaml`; `lib/firebase_options.dart` generated; `android/app/google-services.json` + `ios/Runner/GoogleService-Info.plist` in place.
+
+### Local storage (`presentation/providers/local_storage_provider.dart`)
+| Key | Purpose |
+|---|---|
+| `StorageKeys.fcmTokenKey` (`'fcm_token'`) | Cached FCM device token. Written by `FirebaseService` on init + `onTokenRefresh`. Read by every auth view-model when assembling the request. |
+| `StorageKeys.deviceTypeKey` (`'device_type'`) | Cached device platform ("ios" / "android"). Static for the install; computed once on first init from `Platform.isIOS/isAndroid`. |
+
+### Firebase bootstrap (`services/firebase_service.dart`)
+`FirebaseService.instance.initialize()` now does:
+1. `_requestPermission()` — `FirebaseMessaging.instance.requestPermission(alert/badge/sound)`.
+2. `_getToken(storage)` — fetches via `FirebaseMessaging.instance.getToken()` and writes to `StorageKeys.fcmTokenKey` in secure storage.
+3. Writes `StorageKeys.deviceTypeKey` from `FirebaseService.currentDeviceType()` (`Platform.isIOS → "ios"`, `Platform.isAndroid → "android"`, else `"web"`).
+4. Wires foreground / background / terminated handlers + `onTokenRefresh` listener that re-writes the latest token.
+
+Static helpers: `FirebaseService.currentDeviceType()` and `FirebaseService.cachedToken(storage)` — used by every auth view-model when building requests so we don't re-hit `FirebaseMessaging` on the hot path.
+
+### View-model injections (`presentation/providers/vm_provider.dart`)
+`SignInViewModel` now takes `LocalStorageService` in addition to `AuthRepository` + `AuthStateNotifier`, so it can `FirebaseService.cachedToken(storage)` when building the request. `SignUpViewModel` and `OtpViewModel` already had storage injected (`pendingVerifyEmailKey` flow) and now reuse it for the FCM lookup. `AuthMixin.signInWithSocial` gains a `storage` parameter for the Google flow.
+
+### Boot wiring (`lib/main.dart`)
+After `ApiService.instance.initialize()`, `main()` runs `await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)` followed by `await FirebaseService.instance.initialize()`. Both are wrapped in a fail-soft `try/catch` so a misconfigured Firebase (e.g. iOS APNs key not uploaded yet) doesn't block app launch — the worst case is `fcm_token` being absent on subsequent auth requests, which the backend treats as optional.
+
+### Planned changes
+- All auth request DTOs (`sign_in_request`, `sign_up_request`, `otp_request#OtpVerifyRequest`, `refresh_token_request`, `social_login_request`) gain optional `fcmToken` + `deviceType` fields, serialized as camelCase (`fcmToken` / `deviceType`) to match the backend's default `JsonSerializerDefaults.Web` policy.
+- View-models for sign-in / sign-up / OTP verify / Google social / logout read the cached values from secure storage and pass them through the repository → backend on every token-issuing call. Backend persists each (`user`, `fcm_token`) row in `identity.UserDevice` and auto-subscribes it to the `"all"` topic.
+
 ## Pending Modules
 
 - `splash` / `intro` — bootstrap and onboarding (screens exist; flow not yet documented here).
 - `main` — post-auth shell (screens exist; flow not yet documented here).
-- Profile, notifications, FCM token registration (`/notifications/register-token`), avatar upload — endpoints declared, no flow yet.
+- Profile, avatar upload — endpoints declared, no flow yet.

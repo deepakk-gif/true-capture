@@ -13,10 +13,11 @@ public sealed class GoogleAuthOptions
 }
 
 public sealed class AuthService(
-    AppDbContext              db,
-    IBaseService              baseService,
-    ITokenService             tokens,
-    IOtpService               otps,
+    AppDbContext                db,
+    IBaseService                baseService,
+    ITokenService               tokens,
+    IOtpService                 otps,
+    IUserDeviceService          devices,
     IOptions<GoogleAuthOptions> googleOpt) : IAuthService
 {
     private readonly GoogleAuthOptions _googleOpt = googleOpt.Value;
@@ -47,6 +48,8 @@ public sealed class AuthService(
             var issued = IssueAndPersistRefresh(user, perms, null, null);
             await db.SaveChangesAsync(ct);
 
+            await TryRegisterDeviceAsync(user.Id, dto.FcmToken, dto.DeviceType, ct);
+
             return Result<AuthTokensDto>.Success(
                 new AuthTokensDto(issued.AccessToken, issued.RefreshToken, issued.AccessExpiresAtUtc));
         }, ct, useTransaction: true);
@@ -69,6 +72,8 @@ public sealed class AuthService(
             var perms  = await LoadPermissionCodesAsync(user.Id, ct);
             var issued = IssueAndPersistRefresh(user, perms, userAgent, ip);
             await db.SaveChangesAsync(ct);
+
+            await TryRegisterDeviceAsync(user.Id, dto.FcmToken, dto.DeviceType, ct);
 
             return Result<AuthTokensDto>.Success(
                 new AuthTokensDto(issued.AccessToken, issued.RefreshToken, issued.AccessExpiresAtUtc));
@@ -101,20 +106,27 @@ public sealed class AuthService(
             });
             await db.SaveChangesAsync(ct);
 
+            await TryRegisterDeviceAsync(stored.UserId, dto.FcmToken, dto.DeviceType, ct);
+
             return Result<AuthTokensDto>.Success(
                 new AuthTokensDto(issued.AccessToken, issued.RefreshToken, issued.AccessExpiresAtUtc));
         }, ct, useTransaction: true);
 
-    public Task<Result<bool>> LogoutAsync(string refreshToken, CancellationToken ct)
+    public Task<Result<bool>> LogoutAsync(string refreshToken, long currentUserId, string? fcmToken, CancellationToken ct)
         => baseService.ExecuteAsync("Auth.Logout", async () =>
         {
             var hash = tokens.HashRefreshToken(refreshToken);
             var stored = await db.Set<RefreshToken>().FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
-            if (stored is null) return Result<bool>.Success(true);   // idempotent
+            if (stored is not null)
+            {
+                stored.RevokedAtUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+            }
 
-            stored.RevokedAtUtc = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
-            return Result<bool>.Success(true);
+            if (currentUserId > 0 && !string.IsNullOrWhiteSpace(fcmToken))
+                await devices.RemoveAsync(currentUserId, fcmToken, ct);
+
+            return Result<bool>.Success(true);   // idempotent on both legs
         }, ct, useTransaction: false);
 
     public Task<Result<AuthTokensDto>> VerifyOtpAndIssueAsync(
@@ -134,6 +146,8 @@ public sealed class AuthService(
             var perms  = await LoadPermissionCodesAsync(user.Id, ct);
             var issued = IssueAndPersistRefresh(user, perms, userAgent, ip);
             await db.SaveChangesAsync(ct);
+
+            await TryRegisterDeviceAsync(user.Id, dto.FcmToken, dto.DeviceType, ct);
 
             return Result<AuthTokensDto>.Success(
                 new AuthTokensDto(issued.AccessToken, issued.RefreshToken, issued.AccessExpiresAtUtc));
@@ -206,7 +220,7 @@ public sealed class AuthService(
                     PasswordHash  = "",        // no password — Google account
                     DisplayName   = payload.Name,
                     AvatarUrl     = payload.Picture,
-                    EmailVerified = payload.EmailVerified ?? true,
+                    EmailVerified = payload.EmailVerified,
                     IsActive      = true,
                     GoogleSubject = payload.Subject,
                 };
@@ -216,7 +230,7 @@ public sealed class AuthService(
             else if (string.IsNullOrEmpty(user.GoogleSubject))
             {
                 user.GoogleSubject = payload.Subject;
-                if (!user.EmailVerified) user.EmailVerified = payload.EmailVerified ?? true;
+                if (!user.EmailVerified) user.EmailVerified = payload.EmailVerified;
             }
 
             if (!user.IsActive)
@@ -228,9 +242,17 @@ public sealed class AuthService(
             var issued = IssueAndPersistRefresh(user, perms, userAgent, ip);
             await db.SaveChangesAsync(ct);
 
+            await TryRegisterDeviceAsync(user.Id, dto.FcmToken, dto.DeviceType, ct);
+
             return Result<AuthTokensDto>.Success(
                 new AuthTokensDto(issued.AccessToken, issued.RefreshToken, issued.AccessExpiresAtUtc));
         }, ct, useTransaction: true);
+
+    private async Task TryRegisterDeviceAsync(long userId, string? fcmToken, string? deviceType, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(fcmToken)) return;
+        await devices.RegisterAsync(userId, fcmToken, deviceType, ct);
+    }
 
     private IssuedTokens IssueAndPersistRefresh(User user, List<string> perms, string? userAgent, string? ip)
     {
@@ -261,7 +283,8 @@ public sealed class AuthService(
 
     private async Task<List<string>> LoadPermissionCodesAsync(long userId, CancellationToken ct)
     {
-        return await db.Set<UserRole>()
+        // Role-derived permission codes
+        var fromRoles = db.Set<UserRole>()
             .Where(ur => ur.UserId == userId)
             .Join(db.Set<RolePermission>(),
                 ur => ur.RoleId,
@@ -270,8 +293,17 @@ public sealed class AuthService(
             .Join(db.Set<Permission>(),
                 pid => pid,
                 p   => p.Id,
-                (_, p) => p.Code)
-            .Distinct()
-            .ToListAsync(ct);
+                (_, p) => p.Code);
+
+        // Direct per-user permission grants — used by the super-admin
+        // "Create admin with permissions" flow to grant fine-grained powers.
+        var fromUser = db.Set<UserPermission>()
+            .Where(up => up.UserId == userId)
+            .Join(db.Set<Permission>(),
+                up => up.PermissionId,
+                p  => p.Id,
+                (_, p) => p.Code);
+
+        return await fromRoles.Concat(fromUser).Distinct().ToListAsync(ct);
     }
 }

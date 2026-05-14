@@ -9,7 +9,7 @@ namespace TrueCapture.Modules.Identity.Services;
 public sealed class OtpService(
     AppDbContext  db,
     IBaseService  baseService,
-    IEmailSender  email)
+    IEmailSender  emailSender)
     : IOtpService
 {
     private const int    CodeLength       = 6;
@@ -61,7 +61,7 @@ public sealed class OtpService(
             };
             var body = $"Your code is: {code}\nIt expires in {ExpiryMinutes} minutes.";
 
-            await email.SendAsync(new EmailMessage(email, subject, body), ct);
+            await emailSender.SendAsync(new EmailMessage(email, subject, body), ct);
 
             return Result<bool>.Success(true);
         }, ct, useTransaction: true);

@@ -4,14 +4,18 @@ import '../../../../core/constants/api_endpoints.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../network/dto/request/auth/otp_request.dart';
 import '../../../../repositories/auth_repository.dart';
+import '../../../../services/firebase_service.dart';
+import '../../../../services/local_service.dart';
+import '../../../providers/local_storage_provider.dart';
 import '../../../providers/user_data_provider.dart';
 import '../../base/base_view_model.dart';
 
 class OtpViewModel extends BaseViewModel {
-  OtpViewModel(this._authRepository, this._authStateNotifier);
+  OtpViewModel(this._authRepository, this._authStateNotifier, this._storage);
 
   final AuthRepository _authRepository;
   final AuthStateNotifier _authStateNotifier;
+  final LocalStorageService _storage;
 
   /// Handles a 6-digit OTP submission. Behavior branches on [purpose]:
   /// - [OtpPurpose.verifyEmail]: calls `/verify-otp`, persists tokens, navigates to main.
@@ -27,8 +31,15 @@ class OtpViewModel extends BaseViewModel {
       operation: () async {
         switch (purpose) {
           case OtpPurpose.verifyEmail:
+            final fcmToken = await FirebaseService.cachedToken(_storage);
             final response = await _authRepository.verifyOtp(
-              OtpVerifyRequest(email: email, code: code, purpose: purpose),
+              OtpVerifyRequest(
+                email:      email,
+                code:       code,
+                purpose:    purpose,
+                fcmToken:   fcmToken,
+                deviceType: FirebaseService.currentDeviceType(),
+              ),
             );
             await _authStateNotifier.saveToken(
               response.accessToken,
@@ -37,6 +48,7 @@ class OtpViewModel extends BaseViewModel {
             if (response.user != null) {
               await _authStateNotifier.setUser(response.user!);
             }
+            await _storage.delete(StorageKeys.pendingVerifyEmailKey);
             if (!context.mounted) return;
             AppRouter.go(context, ScreenPath.routeMain);
             break;

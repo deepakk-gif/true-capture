@@ -8,7 +8,8 @@ public static class UsersServiceExtensions
 {
     public static IServiceCollection AddUsersModule(this IServiceCollection services, IConfiguration cfg)
     {
-        services.AddScoped<IAdminUsersService, AdminUsersService>();
+        services.AddScoped<IAdminUsersService,    AdminUsersService>();
+        services.AddScoped<IAdminAccountsService, AdminAccountsService>();
         return services;
     }
 }

@@ -11,6 +11,13 @@
     <ProjectReference Include="..\TrueCapture.Infrastructure\TrueCapture.Infrastructure.csproj" />
     <ProjectReference Include="..\TrueCapture.Modules.Identity\TrueCapture.Modules.Identity.csproj" />
     <ProjectReference Include="..\TrueCapture.Modules.Users\TrueCapture.Modules.Users.csproj" />
+    <ProjectReference Include="..\TrueCapture.Modules.Notifications\TrueCapture.Modules.Notifications.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="config\firebase-service-account.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
@@ -20,6 +27,11 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
     <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

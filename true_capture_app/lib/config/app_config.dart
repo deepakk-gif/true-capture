@@ -1,9 +1,9 @@
-enum Environment { dev, staging, prod }
+enum Environment { dev, staging, prod, local }
 
 class AppConfig {
   AppConfig._();
 
-  static Environment environment = Environment.dev;
+  static Environment environment = Environment.local;
 
   static String get baseUrl {
     switch (environment) {
@@ -13,6 +13,8 @@ class AppConfig {
         return 'https://api.staging.truecapture.com';
       case Environment.prod:
         return 'https://api.truecapture.com';
+      case Environment.local:
+        return 'http://10.0.2.2:5080/';
     }
   }
 

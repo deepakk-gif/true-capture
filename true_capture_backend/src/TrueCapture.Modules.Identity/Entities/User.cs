@@ -19,4 +19,5 @@ public class User : BaseEntity
 
     public List<UserRole>     UserRoles     { get; set; } = [];
     public List<RefreshToken> RefreshTokens { get; set; } = [];
+    public List<UserDevice>   UserDevices   { get; set; } = [];
 }

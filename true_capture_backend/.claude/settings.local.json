@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet run *)",
+      "Read(//usr/local/share/dotnet/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//Users/ios/.dotnet/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(dotnet --version)",
+      "Bash(dotnet build *)",
+      "Bash(brew services *)",
+      "Read(//opt/homebrew/opt/**)",
+      "Bash(pg_isready)",
+      "Bash(redis-cli ping *)",
+      "Read(//Users/ios/Documents/Deepak-projects/practice/true-capture/true_capture_app/lib/presentation/screens/auth/**)",
+      "Read(//Users/ios/Documents/Deepak-projects/practice/true-capture/true_capture_app/lib/presentation/screens/splash/**)"
+    ]
+  }
+}

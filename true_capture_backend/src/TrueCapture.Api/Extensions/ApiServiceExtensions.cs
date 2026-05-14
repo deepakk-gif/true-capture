@@ -10,6 +10,7 @@ using TrueCapture.Infrastructure.Extensions;
 using TrueCapture.Infrastructure.Seeding;
 using TrueCapture.Modules.Identity.Extensions;
 using TrueCapture.Modules.Identity.Services;
+using TrueCapture.Modules.Notifications.Extensions;
 using TrueCapture.Modules.Users.Extensions;
 using TrueCapture.Shared.Constants;
 
@@ -22,6 +23,7 @@ public static class ApiServiceExtensions
         services.AddInfrastructure(cfg);
         services.AddIdentityModule(cfg);
         services.AddUsersModule(cfg);
+        services.AddNotificationsModule(cfg);
 
         services.AddControllers();
         services.AddEndpointsApiExplorer();

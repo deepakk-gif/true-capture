@@ -6,23 +6,25 @@ import '../log/app_logs.dart';
 import '../network/dto/request/auth/google_sign_in_request.dart';
 import '../presentation/providers/user_data_provider.dart';
 import '../repositories/auth_repository.dart';
+import '../services/firebase_service.dart';
+import '../services/local_service.dart';
 import '../services/social_login_service.dart';
 
 mixin AuthMixin {
   /// Runs the full social-sign-in flow:
   ///   1. Gets a provider-issued ID token via [SocialLoginService].
-  ///   2. POSTs it to the backend (`/api/auth/google` for Google).
+  ///   2. POSTs it to the backend (`/api/auth/google` for Google), including
+  ///      the cached FCM device token + device type so the backend can
+  ///      register this device for push notifications.
   ///   3. Persists tokens via [AuthStateNotifier].
   ///   4. Navigates to the main shell.
-  ///
-  /// Surfaces nulls / errors via [onError]; calls [onSuccess] only after
-  /// tokens are saved.
   Future<void> signInWithSocial({
-    required SocialUserType   socialType,
-    required AuthRepository   authRepository,
+    required SocialUserType    socialType,
+    required AuthRepository    authRepository,
     required AuthStateNotifier authStateNotifier,
-    required BuildContext     context,
-    required VoidCallback     onSuccess,
+    required LocalStorageService storage,
+    required BuildContext      context,
+    required VoidCallback      onSuccess,
     void Function(String message)? onError,
   }) async {
     try {
@@ -39,8 +41,13 @@ mixin AuthMixin {
         return;
       }
 
+      final fcmToken = await FirebaseService.cachedToken(storage);
       final response = await authRepository.googleSignIn(
-        GoogleSignInRequest(idToken: social.idToken),
+        GoogleSignInRequest(
+          idToken:    social.idToken,
+          fcmToken:   fcmToken,
+          deviceType: FirebaseService.currentDeviceType(),
+        ),
       );
       await authStateNotifier.saveToken(
         response.accessToken,

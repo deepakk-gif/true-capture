@@ -26,6 +26,7 @@ class AuthStateNotifier extends StateNotifier<UserResponse?> {
     await _storage.delete(StorageKeys.accessTokenKey);
     await _storage.delete(StorageKeys.refreshTokenKey);
     await _storage.delete(StorageKeys.userIdKey);
+    await _storage.delete(StorageKeys.pendingVerifyEmailKey);
   }
 }
 

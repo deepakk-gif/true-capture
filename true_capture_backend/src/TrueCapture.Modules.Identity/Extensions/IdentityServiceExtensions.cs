@@ -17,10 +17,13 @@ public static class IdentityServiceExtensions
         services.Configure<JwtOptions>(cfg.GetSection("Jwt"));
         services.Configure<GoogleAuthOptions>(cfg.GetSection("Authentication:Google"));
         services.Configure<EmailOptions>(cfg.GetSection("Email"));
+        services.Configure<FirebaseOptions>(cfg.GetSection("Firebase"));
 
         services.AddSingleton<ITokenService, TokenService>();
         services.AddScoped<IEmailSender, SmtpEmailSender>();
+        services.AddSingleton<IFcmSender, FirebaseFcmSender>();
         services.AddScoped<IOtpService, OtpService>();
+        services.AddScoped<IUserDeviceService, UserDeviceService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddSingleton<IEntityModelConfigurator, IdentityModelConfigurator>();
         services.AddDataSeeder<IdentitySystemSeeder>();

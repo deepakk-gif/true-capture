@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TrueCapture.Modules.Notifications</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrueCapture.Shared\TrueCapture.Shared.csproj" />
+    <ProjectReference Include="..\TrueCapture.Infrastructure\TrueCapture.Infrastructure.csproj" />
+    <!-- Narrow cross-module reference: admin notification fan-out joins on the UserDevice entity
+         owned by the Identity module. Mirror this when extracting Notifications later. -->
+    <ProjectReference Include="..\TrueCapture.Modules.Identity\TrueCapture.Modules.Identity.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

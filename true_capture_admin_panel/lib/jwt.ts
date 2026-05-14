@@ -7,6 +7,9 @@ export type JwtClaims = {
   email?: string;
   name?: string;
   role?: string;
+  // Backend `TokenService.Issue` serializes the permission list as a single
+  // comma-separated string under the `perms` claim.
+  perms?: string;
   exp?: number;
   [k: string]: unknown;
 };
@@ -28,4 +31,20 @@ export function isAdminToken(token: string | undefined): boolean {
   if (!claims) return false;
   if (typeof claims.exp === "number" && claims.exp * 1000 < Date.now()) return false;
   return claims.role === "Admin";
+}
+
+export function permissionsFromToken(token: string | undefined): string[] {
+  if (!token) return [];
+  const claims = decodeJwtClaims(token);
+  if (!claims?.perms) return [];
+  return claims.perms
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+export function hasPermission(token: string | undefined, code: string): boolean {
+  return permissionsFromToken(token).some(
+    (c) => c.toLowerCase() === code.toLowerCase(),
+  );
 }

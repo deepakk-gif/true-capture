@@ -29,8 +29,13 @@ class ErrorHandler {
       case DioExceptionType.badResponse:
         final data = e.response?.data;
         String message = 'Something went wrong';
-        if (data is Map && data['message'] is String) {
-          message = data['message'] as String;
+        if (data is Map) {
+          final errors = data['errors'];
+          if (errors is List && errors.isNotEmpty) {
+            message = errors.map((x) => x.toString()).join('; ');
+          } else if (data['message'] is String) {
+            message = data['message'] as String;
+          }
         }
         return ResponseError(
           message: message,

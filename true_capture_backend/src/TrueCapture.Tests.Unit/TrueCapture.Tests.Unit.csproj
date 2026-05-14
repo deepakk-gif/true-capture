@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\TrueCapture.Infrastructure\TrueCapture.Infrastructure.csproj" />
     <ProjectReference Include="..\TrueCapture.Modules.Identity\TrueCapture.Modules.Identity.csproj" />
+    <ProjectReference Include="..\TrueCapture.Modules.Users\TrueCapture.Modules.Users.csproj" />
   </ItemGroup>
 
   <ItemGroup>

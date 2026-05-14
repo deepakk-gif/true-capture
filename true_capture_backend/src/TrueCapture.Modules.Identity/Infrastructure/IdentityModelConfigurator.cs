@@ -83,6 +83,28 @@ public sealed class IdentityModelConfigurator : IEntityModelConfigurator
             e.Ignore(x => x.IsActive);
         });
 
+        b.Entity<UserPermission>(e =>
+        {
+            e.ToTable("UserPermission", schema: Schemas.Identity);
+            e.HasKey(x => x.Id);
+            e.Property(x => x.RowVersion).IsConcurrencyToken();
+            e.HasIndex(x => new { x.UserId, x.PermissionId }).IsUnique();
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+            e.HasOne(x => x.Permission).WithMany().HasForeignKey(x => x.PermissionId);
+        });
+
+        b.Entity<UserDevice>(e =>
+        {
+            e.ToTable("UserDevice", schema: Schemas.Identity);
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FcmToken).HasMaxLength(512).IsRequired();
+            e.Property(x => x.DeviceType).HasMaxLength(16);
+            e.Property(x => x.RowVersion).IsConcurrencyToken();
+            e.HasIndex(x => x.FcmToken).IsUnique();
+            e.HasIndex(x => x.UserId);
+            e.HasOne(x => x.User).WithMany(u => u.UserDevices).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<OtpCode>(e =>
         {
             e.ToTable("OtpCode", schema: Schemas.Identity);

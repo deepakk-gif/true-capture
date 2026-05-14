@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../../../core/constants/api_endpoints.dart';
 import '../../../core/router/app_router.dart';
 import '../../../mixin/auth_mixin.dart';
 import '../../../repositories/auth_repository.dart';
@@ -28,6 +29,24 @@ class SplashViewmodel extends BaseViewModel with AuthMixin {
         if (token == null || token.isEmpty) {
           if (!context.mounted) return;
           AppRouter.go(context, ScreenPath.routeIntro);
+          return;
+        }
+
+        // Email-verification gate: a token issued by /register persists locally
+        // until the user completes OTP verify. If that key is set, route the
+        // user back to the OTP screen no matter how they relaunched the app.
+        final pendingEmail = await _localStorageService
+            .read(StorageKeys.pendingVerifyEmailKey);
+        if (pendingEmail != null && pendingEmail.isNotEmpty) {
+          if (!context.mounted) return;
+          AppRouter.go(
+            context,
+            ScreenPath.routeOtpVerify,
+            extra: {
+              'email':   pendingEmail,
+              'purpose': OtpPurpose.verifyEmail,
+            },
+          );
           return;
         }
 

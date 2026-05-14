@@ -22,18 +22,26 @@ class RefreshInterceptor extends Interceptor {
 
   static const String _retriedFlag = 'tc_retried_after_refresh';
 
+  // Endpoints that *issue* tokens — a 401 here can't be recovered by refreshing,
+  // and trying would loop. Everything else (including /logout, /send-otp, etc.)
+  // should refresh + retry on 401.
+  static const Set<String> _skipRefreshPaths = {
+    ApiEndpoints.refresh,
+    ApiEndpoints.login,
+    ApiEndpoints.register,
+    ApiEndpoints.google,
+  };
+
   @override
   Future<void> onError(DioException err, ErrorInterceptorHandler handler) async {
     final status = err.response?.statusCode;
     final req    = err.requestOptions;
     final path   = req.path;
 
-    // Only retry on 401, never on the auth endpoints themselves, and only once
-    // per request. Bail on the rest to the error chain.
-    final isAuthCall = path.startsWith('/api/auth/');
-    final alreadyTried = req.extra[_retriedFlag] == true;
+    final isIssuanceCall = _skipRefreshPaths.contains(path);
+    final alreadyTried   = req.extra[_retriedFlag] == true;
 
-    if (status != 401 || isAuthCall || alreadyTried) {
+    if (status != 401 || isIssuanceCall || alreadyTried) {
       handler.next(err);
       return;
     }

@@ -23,13 +23,18 @@ final signInViewModelProvider =
     Provider.autoDispose<SignInViewModel>((ref) {
   return SignInViewModel(
     ref.read(authRepo),
+    ref.read(localStorageServiceProvider),
     ref.read(authStateNotifierProvider.notifier),
   );
 });
 
 final signUpViewModelProvider =
     Provider.autoDispose<SignUpViewModel>((ref) {
-  return SignUpViewModel(ref.read(authRepo));
+  return SignUpViewModel(
+    ref.read(authRepo),
+    ref.read(localStorageServiceProvider),
+    ref.read(authStateNotifierProvider.notifier),
+  );
 });
 
 final forgotPasswordViewModelProvider =
@@ -41,6 +46,7 @@ final otpViewModelProvider = Provider.autoDispose<OtpViewModel>((ref) {
   return OtpViewModel(
     ref.read(authRepo),
     ref.read(authStateNotifierProvider.notifier),
+    ref.read(localStorageServiceProvider),
   );
 });
 

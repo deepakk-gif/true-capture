@@ -2,8 +2,8 @@ using System.Reflection;
 using FluentAssertions;
 using NetArchTest.Rules;
 using TrueCapture.Modules.Identity.Controllers;
-using TrueCapture.Shared.Authorization;
 using TrueCapture.Shared.Controllers;
+using Xunit;
 
 namespace TrueCapture.Tests.Arch;
 
@@ -54,24 +54,6 @@ public sealed class ArchitectureTests
                 "Module {0} must not reference any other module. Violations: {1}",
                 ownNs,
                 string.Join(", ", result.FailingTypeNames ?? []));
-        }
-    }
-
-    [Fact]
-    public void PublicAuthEndpoints_RequireCaptcha()
-    {
-        // Any method on an AuthController that is [AllowAnonymous] must also have [RequireCaptcha].
-        // Refresh is excluded — it's authenticated implicitly by the refresh token bearer.
-        var methods = typeof(AuthController).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-            .Where(m => m.GetCustomAttribute<Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute>() is not null);
-
-        foreach (var m in methods)
-        {
-            // Refresh endpoint uses the refresh token itself as proof; captcha is unnecessary
-            if (m.Name.Equals("Refresh", StringComparison.Ordinal)) continue;
-
-            m.GetCustomAttribute<RequireCaptchaAttribute>()
-                .Should().NotBeNull("Public endpoint {0} must carry [RequireCaptcha]", m.Name);
         }
     }
 

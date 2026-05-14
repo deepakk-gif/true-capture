@@ -16,6 +16,9 @@ class StorageKeys {
   static const String fingurePrintLockStatusKey = 'fingure_lock_status';
   static const String biometricAsked = 'biometric_asked';
   static const String userIdKey = 'user_id';
+  static const String pendingVerifyEmailKey = 'pending_verify_email';
+  static const String fcmTokenKey = 'fcm_token';
+  static const String deviceTypeKey = 'device_type';
 }
 
 final localStorageServiceProvider = Provider<LocalStorageService>((ref) {

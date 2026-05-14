@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "862645188011",
+    "project_id": "fir-capture-76578",
+    "storage_bucket": "fir-capture-76578.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:862645188011:android:2693e8272afb40a1abceee",
+        "android_client_info": {
+          "package_name": "com.example.true_capture_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "862645188011-iel0qlnln2pjbj4udn0lj3pepmerlok1.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBem1X773_f3eaX6PXZSsAOkk4AcqM8yOM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "862645188011-iel0qlnln2pjbj4udn0lj3pepmerlok1.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "862645188011-gejrnbdjkog2thpi5grqpmk75m72lkfj.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.trueCaptureApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

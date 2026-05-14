@@ -6,6 +6,7 @@ class UserResponse {
     this.phone,
     this.avatarUrl,
     this.profileStatus,
+    this.emailVerified = false,
   });
 
   final String id;
@@ -14,14 +15,16 @@ class UserResponse {
   final String? phone;
   final String? avatarUrl;
   final String? profileStatus;
+  final bool emailVerified;
 
   factory UserResponse.fromJson(Map<String, dynamic> json) => UserResponse(
         id: json['id']?.toString() ?? '',
         email: json['email']?.toString() ?? '',
-        name: json['name']?.toString(),
+        name: (json['name'] ?? json['displayName'] ?? json['display_name'])?.toString(),
         phone: json['phone']?.toString(),
-        avatarUrl: json['avatar_url']?.toString(),
-        profileStatus: json['profile_status']?.toString(),
+        avatarUrl: (json['avatarUrl'] ?? json['avatar_url'])?.toString(),
+        profileStatus: (json['profileStatus'] ?? json['profile_status'])?.toString(),
+        emailVerified: (json['emailVerified'] ?? json['email_verified']) == true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -29,7 +32,8 @@ class UserResponse {
         'email': email,
         'name': name,
         'phone': phone,
-        'avatar_url': avatarUrl,
-        'profile_status': profileStatus,
+        'avatarUrl': avatarUrl,
+        'profileStatus': profileStatus,
+        'emailVerified': emailVerified,
       };
 }

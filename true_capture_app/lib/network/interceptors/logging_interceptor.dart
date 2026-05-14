@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 
 import '../../log/app_logs.dart';
@@ -7,7 +9,7 @@ class LoggingInterceptor extends Interceptor {
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     appLog('==> ${options.method} ${options.uri}', tag: 'HTTP');
     if (options.data != null) {
-      appLog('Body: ${options.data}', tag: 'HTTP');
+      appLog('Body: ${jsonEncode(options.data)}', tag: 'HTTP');
     }
     handler.next(options);
   }
