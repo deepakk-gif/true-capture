@@ -1,14 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using TrueCapture.Infrastructure.Data;
 using TrueCapture.Modules.Identity.Entities;
+using TrueCapture.Modules.Social.Entities;
+using TrueCapture.Modules.Social.Services;
 using TrueCapture.Modules.Users.Models;
 using TrueCapture.Shared.Services;
 
 namespace TrueCapture.Modules.Users.Services;
 
 public sealed class AdminUsersService(
-    AppDbContext db,
-    IBaseService baseService) : IAdminUsersService
+    AppDbContext         db,
+    IBaseService         baseService,
+    INotificationService notifications) : IAdminUsersService
 {
     public Task<Result<AdminUserListResult>> ListAsync(AdminUserListQuery q, CancellationToken ct)
         => baseService.ExecuteAsync("AdminUsers.List", async () =>
@@ -72,6 +75,75 @@ public sealed class AdminUsersService(
             return Result<AdminUserListResult>.Success(
                 new AdminUserListResult(rows, nextCursor, total));
         }, ct);
+
+    public Task<Result<AdminUserDetail>> GetDetailAsync(long id, CancellationToken ct)
+        => baseService.ExecuteAsync("AdminUsers.GetDetail", async () =>
+        {
+            var user = await db.Set<User>().AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == id, ct);
+            return user is null
+                ? Result<AdminUserDetail>.NotFound("User not found.")
+                : Result<AdminUserDetail>.Success(await BuildDetailAsync(user, ct));
+        }, ct);
+
+    public Task<Result<AdminUserDetail>> UpdateAsync(long id, AdminUpdateUserRequest req, CancellationToken ct)
+        => baseService.ExecuteAsync("AdminUsers.Update", async () =>
+        {
+            var displayName = Normalize(req.DisplayName);
+            var bio         = Normalize(req.Bio);
+
+            if (displayName is { Length: > 80 })
+                return Result<AdminUserDetail>.Validation(["Display name must be 80 characters or fewer."]);
+            if (bio is { Length: > 500 })
+                return Result<AdminUserDetail>.Validation(["Bio must be 500 characters or fewer."]);
+
+            var user = await db.Set<User>().FirstOrDefaultAsync(u => u.Id == id, ct);
+            if (user is null) return Result<AdminUserDetail>.NotFound("User not found.");
+
+            user.DisplayName = displayName;
+            user.Bio         = bio;
+            await db.SaveChangesAsync(ct);
+
+            return Result<AdminUserDetail>.Success(await BuildDetailAsync(user, ct));
+        }, ct, useTransaction: true);
+
+    public Task<Result<AdminUserDetail>> SetStatusAsync(long id, bool isActive, CancellationToken ct)
+        => baseService.ExecuteAsync("AdminUsers.SetStatus", async () =>
+        {
+            var user = await db.Set<User>().FirstOrDefaultAsync(u => u.Id == id, ct);
+            if (user is null) return Result<AdminUserDetail>.NotFound("User not found.");
+
+            user.IsActive = isActive;
+            if (!isActive)
+                await notifications.EmitAsync(user.Id, NotificationType.AccountSuspended,
+                    text: "Your account has been suspended by an administrator.", ct: ct);
+            await db.SaveChangesAsync(ct);
+
+            return Result<AdminUserDetail>.Success(await BuildDetailAsync(user, ct));
+        }, ct, useTransaction: true);
+
+    private static string? Normalize(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>Builds the admin detail with live follow/post counts (privacy is not applied — admin sees all).</summary>
+    private async Task<AdminUserDetail> BuildDetailAsync(User u, CancellationToken ct)
+    {
+        var followers = await db.Set<Follow>()
+            .CountAsync(f => f.FolloweeId == u.Id && f.Status == FollowStatus.Accepted, ct);
+        var following = await db.Set<Follow>()
+            .CountAsync(f => f.FollowerId == u.Id && f.Status == FollowStatus.Accepted, ct);
+        var posts = await db.Set<Post>().CountAsync(p => p.AuthorId == u.Id, ct);
+
+        return new AdminUserDetail(
+            u.Id, u.Email, u.Username, u.DisplayName, u.AvatarUrl, u.Bio,
+            u.EmailVerified, u.IsActive, u.IsAdmin, u.IsVerified,
+            u.GoogleSubject != null && u.GoogleSubject != "",
+            u.LastLoginAtUtc, u.CreatedAtUtc,
+            AccountType:    u.AccountType.ToString().ToLowerInvariant(),
+            FollowersCount: followers,
+            FollowingCount: following,
+            PostsCount:     posts);
+    }
 
     private static string EncodeCursor(long ticks, long id)
     {

@@ -34,11 +34,20 @@ abstract class BaseViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Runs [operation] inside a loading/error state machine.
+  ///
+  /// [errorState] controls how a failure is presented:
+  /// - [ScreenState.error] (default) — the screen swaps to a full-page error
+  ///   view; use for initial page loads where there is no content to keep.
+  /// - [ScreenState.content] — the screen stays put (form, list, etc.) and the
+  ///   error message is surfaced transiently (e.g. a snackbar); use for form
+  ///   submissions and other recoverable actions.
   Future<T?> executeWithLoading<T>({
     required Future<T> Function() operation,
     ErrorCallback? errorCallBack,
     ScreenState initialState = ScreenState.apiProgress,
     ScreenState successState = ScreenState.content,
+    ScreenState errorState = ScreenState.error,
   }) async {
     clearError();
     changeScreenState(initialState);
@@ -48,8 +57,9 @@ abstract class BaseViewModel extends ChangeNotifier {
       return result;
     } catch (error, stack) {
       final mapped = ErrorHandler.handle(error);
+      // State first, so listeners reacting to setError() see the final state.
+      changeScreenState(errorState);
       setError(mapped.message);
-      changeScreenState(ScreenState.error);
       appLogError(error, stack, 'VIEW_MODEL');
       errorCallBack?.call(error, stack, mapped.message);
       return null;

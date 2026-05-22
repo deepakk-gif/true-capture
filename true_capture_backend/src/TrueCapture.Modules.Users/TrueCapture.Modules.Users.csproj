@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>TrueCapture.Modules.Users</RootNamespace>
@@ -14,6 +14,9 @@
          canonical User entity owned by the Identity module. Mirror this
          when moving Users into its own deployable later. -->
     <ProjectReference Include="..\TrueCapture.Modules.Identity\TrueCapture.Modules.Identity.csproj" />
+    <!-- Read-only cross-module reference: profile/admin-detail counts query the
+         Follow + Post tables owned by the Social module. -->
+    <ProjectReference Include="..\TrueCapture.Modules.Social\TrueCapture.Modules.Social.csproj" />
   </ItemGroup>
 
   <ItemGroup>

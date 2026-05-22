@@ -62,10 +62,10 @@ export default async function UsersPage({
 
   const columns: Column<AdminUserListResult["items"][number]>[] = [
     { key: "user",     header: "User",      render: (r) => (
-        <div>
+        <Link href={`/users/${r.id}`} className="block hover:underline">
           <div className="font-medium">{r.displayName ?? r.username}</div>
           <div className="text-xs text-neutral-500">@{r.username} · {r.email}</div>
-        </div>
+        </Link>
       ),
     },
     { key: "status",   header: "Status",    render: (r) => (

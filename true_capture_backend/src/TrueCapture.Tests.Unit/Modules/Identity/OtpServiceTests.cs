@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using NSubstitute;
 using TrueCapture.Infrastructure.Data;
 using TrueCapture.Infrastructure.Services;
@@ -32,7 +33,7 @@ public sealed class OtpServiceTests : IDisposable
 
         var baseSvc = new BaseService<AppDbContext>(_db, Substitute.For<IErrorLogger>());
         _email = Substitute.For<IEmailSender>();
-        _sut   = new OtpService(_db, baseSvc, _email);
+        _sut   = new OtpService(_db, baseSvc, _email, Substitute.For<IHostEnvironment>());
     }
 
     private async Task<User> SeedUserAsync(string email = "user@example.com")

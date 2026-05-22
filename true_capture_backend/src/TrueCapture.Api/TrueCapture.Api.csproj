@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>TrueCapture.Api</RootNamespace>
@@ -12,6 +12,8 @@
     <ProjectReference Include="..\TrueCapture.Modules.Identity\TrueCapture.Modules.Identity.csproj" />
     <ProjectReference Include="..\TrueCapture.Modules.Users\TrueCapture.Modules.Users.csproj" />
     <ProjectReference Include="..\TrueCapture.Modules.Notifications\TrueCapture.Modules.Notifications.csproj" />
+    <ProjectReference Include="..\TrueCapture.Modules.Social\TrueCapture.Modules.Social.csproj" />
+    <ProjectReference Include="..\TrueCapture.Modules.Messaging\TrueCapture.Modules.Messaging.csproj" />
   </ItemGroup>
 
   <ItemGroup>

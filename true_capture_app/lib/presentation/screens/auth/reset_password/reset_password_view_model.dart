@@ -4,6 +4,7 @@ import '../../../../core/router/app_router.dart';
 import '../../../../network/dto/request/auth/reset_password_request.dart';
 import '../../../../repositories/auth_repository.dart';
 import '../../base/base_view_model.dart';
+import '../../base/screen_state.dart';
 
 class ResetPasswordViewModel extends BaseViewModel {
   ResetPasswordViewModel(this._authRepository);
@@ -17,6 +18,7 @@ class ResetPasswordViewModel extends BaseViewModel {
     required String newPassword,
   }) async {
     await executeWithLoading(
+      errorState: ScreenState.content,
       operation: () async {
         await _authRepository.resetPassword(
           ResetPasswordRequest(email: email, code: code, newPassword: newPassword),

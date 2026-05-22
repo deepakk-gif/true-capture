@@ -1,5 +1,7 @@
 using Serilog;
 using TrueCapture.Api.Extensions;
+using TrueCapture.Infrastructure.Extensions;
+using TrueCapture.Modules.Messaging.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,12 +21,14 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseSerilogRequestLogging();
+app.UseFileStorage();   // serves uploaded files (avatars, ...) as static files at /media
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapControllers();
+app.MapHub<ChatHub>("/hubs/chat");
 app.MapHealthChecks("/api/health");
 
 if (app.Environment.IsDevelopment() && app.Configuration.GetValue<bool>("RunMigrationsOnStartup"))

@@ -2,9 +2,12 @@ namespace TrueCapture.Shared.Constants;
 
 public static class Schemas
 {
-    public const string Identity = "identity";
-    public const string Audit    = "audit";
-    public const string Cms      = "cms";
+    public const string Identity      = "identity";
+    public const string Audit         = "audit";
+    public const string Cms           = "cms";
+    public const string Social        = "social";
+    public const string Notifications = "notifications";
+    public const string Messaging     = "messaging";
 }
 
 public static class JwtClaims

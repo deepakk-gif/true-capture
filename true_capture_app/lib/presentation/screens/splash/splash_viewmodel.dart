@@ -1,6 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 
-import '../../../core/constants/api_endpoints.dart';
 import '../../../core/router/app_router.dart';
 import '../../../mixin/auth_mixin.dart';
 import '../../../repositories/auth_repository.dart';
@@ -32,24 +33,36 @@ class SplashViewmodel extends BaseViewModel with AuthMixin {
           return;
         }
 
-        // Email-verification gate: a token issued by /register persists locally
-        // until the user completes OTP verify. If that key is set, route the
-        // user back to the OTP screen no matter how they relaunched the app.
+        // Email-verification gate: /register issues a token before the user
+        // completes OTP verify. The OTP screen is only meant to be reached
+        // in-session, right after register. If the app was relaunched while a
+        // verification was still pending, treat the half-finished registration
+        // as abandoned — clear the unverified token (clear() also drops the
+        // pending key) and send the user to sign-in instead of trapping them
+        // on the OTP screen across restarts.
         final pendingEmail = await _localStorageService
             .read(StorageKeys.pendingVerifyEmailKey);
         if (pendingEmail != null && pendingEmail.isNotEmpty) {
+          await _authStateNotifier.clear();
           if (!context.mounted) return;
-          AppRouter.go(
-            context,
-            ScreenPath.routeOtpVerify,
-            extra: {
-              'email':   pendingEmail,
-              'purpose': OtpPurpose.verifyEmail,
-            },
-          );
+          AppRouter.go(context, ScreenPath.routeSignIn);
           return;
         }
 
+        // Fast path: the stored access token is still valid by its persisted
+        // expiry — go straight to Main with no network round-trip (works
+        // offline). Restore the cached profile so Main renders real data
+        // immediately, then refresh it in the background (best-effort).
+        if (await _authStateNotifier.hasValidAccessToken()) {
+          await _authStateNotifier.loadCachedUser();
+          if (!context.mounted) return;
+          AppRouter.go(context, ScreenPath.routeMain);
+          unawaited(_refreshProfileInBackground());
+          return;
+        }
+
+        // Slow path: token has no stored expiry or is expired. Hit /users/me —
+        // the refresh interceptor swaps an expired access token on a 401.
         try {
           final user = await _authRepository.getProfile();
           await _authStateNotifier.setUser(user);
@@ -65,5 +78,14 @@ class SplashViewmodel extends BaseViewModel with AuthMixin {
         AppRouter.go(context, ScreenPath.routeIntro);
       },
     );
+  }
+
+  /// Best-effort profile refresh after the launch fast-path. A failure
+  /// (offline / transient) is swallowed — the cached profile stays in place.
+  Future<void> _refreshProfileInBackground() async {
+    try {
+      final user = await _authRepository.getProfile();
+      await _authStateNotifier.setUser(user);
+    } catch (_) {/* keep the cached profile */}
   }
 }

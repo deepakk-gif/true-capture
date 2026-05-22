@@ -19,4 +19,10 @@ public interface IUserDeviceService
 
     /// <summary>Bulk-deletes UserDevice rows whose FcmToken FCM reported as no longer valid.</summary>
     Task PruneInvalidAsync(IReadOnlyList<string> invalidTokens, CancellationToken ct = default);
+
+    /// <summary>
+    /// Best-effort push to every device of a single user. Never throws — a missing user,
+    /// no devices, or an FCM outage is swallowed. Invalid tokens are pruned automatically.
+    /// </summary>
+    Task PushToUserAsync(long userId, NotificationPayload payload, CancellationToken ct = default);
 }

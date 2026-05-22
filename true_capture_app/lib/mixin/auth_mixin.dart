@@ -4,6 +4,7 @@ import '../core/router/app_router.dart';
 import '../enum/social_user_type.dart';
 import '../log/app_logs.dart';
 import '../network/dto/request/auth/google_sign_in_request.dart';
+import '../network/helper/error_handler.dart';
 import '../presentation/providers/user_data_provider.dart';
 import '../repositories/auth_repository.dart';
 import '../services/firebase_service.dart';
@@ -52,14 +53,18 @@ mixin AuthMixin {
       await authStateNotifier.saveToken(
         response.accessToken,
         refreshToken: response.refreshToken,
+        accessExpiresAtUtc: response.accessExpiresAtUtc,
       );
-      if (response.user != null) {
-        await authStateNotifier.setUser(response.user!);
-      }
+      // The auth response carries no user object — load the full profile
+      // from /api/users/me. Best-effort: sign-in already succeeded.
+      try {
+        final user = await authRepository.getProfile();
+        await authStateNotifier.setUser(user);
+      } catch (_) {/* non-fatal */}
       onSuccess();
     } catch (e, s) {
       appLogError(e, s, 'AUTH_MIXIN');
-      onError?.call(e.toString());
+      onError?.call(ErrorHandler.handle(e).message);
     }
   }
 

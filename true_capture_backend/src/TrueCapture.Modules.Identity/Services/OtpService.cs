@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using TrueCapture.Infrastructure.Data;
 using TrueCapture.Modules.Identity.Entities;
 using TrueCapture.Shared.Services;
@@ -7,9 +8,10 @@ using TrueCapture.Shared.Services;
 namespace TrueCapture.Modules.Identity.Services;
 
 public sealed class OtpService(
-    AppDbContext  db,
-    IBaseService  baseService,
-    IEmailSender  emailSender)
+    AppDbContext      db,
+    IBaseService      baseService,
+    IEmailSender      emailSender,
+    IHostEnvironment  env)
     : IOtpService
 {
     private const int    CodeLength       = 6;
@@ -17,6 +19,9 @@ public sealed class OtpService(
     private const int    RateLimitWindowMinutes = 60;
     private const int    RateLimitMaxSends      = 5;
     private const int    MaxVerifyAttempts      = 5;
+
+    // In Development, OTP is fixed so localhost testing doesn't need a real inbox.
+    private const string DevFixedCode     = "123456";
 
     public Task<Result<bool>> SendAsync(OtpSendRequest req, CancellationToken ct)
         => baseService.ExecuteAsync("Otp.Send", async () =>
@@ -39,8 +44,9 @@ public sealed class OtpService(
                 return Result<bool>.Success(true);
             }
 
-            // Generate code (cryptographically random, zero-padded)
-            var code = GenerateNumericCode(CodeLength);
+            // Generate code (cryptographically random, zero-padded).
+            // In Development, use a fixed code so localhost testing skips email delivery.
+            var code = env.IsDevelopment() ? DevFixedCode : GenerateNumericCode(CodeLength);
             var hash = HashCode(code);
 
             db.Set<OtpCode>().Add(new OtpCode
@@ -71,6 +77,27 @@ public sealed class OtpService(
         {
             var email = req.Email.Trim().ToLowerInvariant();
             var hash  = HashCode(req.Code);
+
+            // Development bypass: accept the fixed code regardless of the stored
+            // row so localhost testing works even with a stale/missing OTP row.
+            if (env.IsDevelopment() && req.Code == DevFixedCode)
+            {
+                var devUser = await db.Set<User>()
+                    .FirstOrDefaultAsync(u => u.Email == email, ct);
+
+                // Burn any pending rows so a later real verify can't reuse them.
+                var pending = await db.Set<OtpCode>()
+                    .Where(o => o.Email == email && o.Purpose == req.Purpose && o.UsedAtUtc == null)
+                    .ToListAsync(ct);
+                foreach (var p in pending)
+                    p.UsedAtUtc = DateTime.UtcNow;
+
+                if (devUser is not null && req.Purpose == OtpPurpose.VerifyEmail)
+                    devUser.EmailVerified = true;
+
+                await db.SaveChangesAsync(ct);
+                return Result<OtpVerifyResult>.Success(new OtpVerifyResult(devUser, req.Purpose));
+            }
 
             // Most-recent unused row for this email+purpose
             var row = await db.Set<OtpCode>()

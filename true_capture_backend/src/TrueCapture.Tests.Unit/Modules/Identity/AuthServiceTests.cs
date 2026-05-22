@@ -41,7 +41,11 @@ public sealed class AuthServiceTests : IDisposable
         });
         var tokens = new TokenService(jwt);
 
-        _sut = new AuthService(_db, baseSvc, tokens);
+        _sut = new AuthService(
+            _db, baseSvc, tokens,
+            Substitute.For<IOtpService>(),
+            Substitute.For<IUserDeviceService>(),
+            Options.Create(new GoogleAuthOptions { ClientId = "" }));
     }
 
     [Fact]

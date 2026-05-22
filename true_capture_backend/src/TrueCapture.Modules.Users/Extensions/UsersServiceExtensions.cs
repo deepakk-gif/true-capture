@@ -10,6 +10,7 @@ public static class UsersServiceExtensions
     {
         services.AddScoped<IAdminUsersService,    AdminUsersService>();
         services.AddScoped<IAdminAccountsService, AdminAccountsService>();
+        services.AddScoped<IUserProfileService,   UserProfileService>();
         return services;
     }
 }

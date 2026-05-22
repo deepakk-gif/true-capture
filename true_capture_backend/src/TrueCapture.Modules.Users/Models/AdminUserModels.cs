@@ -21,6 +21,34 @@ public sealed record AdminUserListResult(
     string?                          NextCursor,
     int                              Total);
 
+/// <summary>Full user record for the admin user-detail page (`GET /api/admin/users/{id}`).</summary>
+public sealed record AdminUserDetail(
+    long       Id,
+    string     Email,
+    string     Username,
+    string?    DisplayName,
+    string?    AvatarUrl,
+    string?    Bio,
+    bool       EmailVerified,
+    bool       IsActive,
+    bool       IsAdmin,
+    bool       IsVerified,
+    bool       HasGoogle,
+    DateTime?  LastLoginAtUtc,
+    DateTime   CreatedAtUtc,
+    string     AccountType,      // "public" | "private"
+    int        FollowersCount,
+    int        FollowingCount,
+    int        PostsCount);
+
+/// <summary>Body of `PUT /api/admin/users/{id}` — admin edit of a user's profile fields.</summary>
+public sealed record AdminUpdateUserRequest(
+    string? DisplayName,
+    string? Bio);
+
+/// <summary>Body of `POST /api/admin/users/{id}/status` — activate/suspend a user.</summary>
+public sealed record SetUserStatusRequest(bool IsActive);
+
 /// <summary>Bind-from-query filter for the admin users list.</summary>
 public sealed class AdminUserListQuery
 {

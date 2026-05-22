@@ -107,13 +107,97 @@ Mints a new admin account with an explicit per-user permission set. Visible only
 5. Action returns `{ ok: true, granted: codes }` to the form — banner shows "Admin created. Granted permissions: …".
 6. `revalidatePath("/users")` invalidates the user-list cache so the freshly-minted admin appears immediately the next time the super-admin navigates back.
 
+## User Detail / Management — DONE
+
+Per-user management page reached by clicking any row on `/users`. Lets an admin edit a user's profile (display name + bio), manage their avatar, and activate/suspend them. All mutations require the `Users.Manage` permission.
+
+### Endpoints consumed
+| Method | Route | Purpose |
+|---|---|---|
+| GET    | `/api/admin/users/{id}`        | `AdminUserDetail` for the page |
+| PUT    | `/api/admin/users/{id}`        | edit display name + bio |
+| POST   | `/api/admin/users/{id}/avatar` | upload avatar (multipart `file`) |
+| DELETE | `/api/admin/users/{id}/avatar` | remove avatar |
+| POST   | `/api/admin/users/{id}/status` | activate / suspend (`{ isActive }`) |
+
+### Files
+| Path | Role |
+|---|---|
+| `app/(admin)/users/[id]/page.tsx` | Server component. `serverFetch<AdminUserDetail>` for the user; resolves the avatar URL with `resolveMediaUrl` (done server-side so the client component need not import `lib/api/server.ts`); reads `Users.Manage` from the JWT via `hasPermission` → `canManage`. Shows a read-only banner when `canManage` is false. |
+| `app/(admin)/users/[id]/user-detail-form.tsx` | Client component `UserDetailView`. Four `useActionState` forms (profile / avatar upload / avatar remove / status). Each server action is bound to the user id via `.bind(null, id)`. Avatar shown via plain `<img>` (or initials fallback); read-only account-info grid. |
+| `app/(admin)/users/[id]/actions.ts` | Server actions `updateUserAction`, `uploadAvatarAction`, `removeAvatarAction`, `setStatusAction` — each `(id, prev, formData)`. Forward to the backend via `serverFetch`, `revalidatePath('/users/{id}')` on success, map `ApiError` (403/404/422) to friendly text. |
+| `lib/api/types.ts` | `AdminUserDetail` type added (mirrors the backend DTO — adds `bio`). |
+| `lib/api/server.ts` | `serverFetch` now omits the JSON `Content-Type` when the body is `FormData` (lets fetch set the multipart boundary); new `resolveMediaUrl(path)` resolves relative backend media paths to absolute URLs. |
+| `app/(admin)/users/page.tsx` | The `User` cell is now a `<Link href="/users/{id}">` into this page. |
+
+### Flow
+1. Admin clicks a user row on `/users` → `/users/{id}`.
+2. `page.tsx` (server) fetches `GET /api/admin/users/{id}`, resolves the avatar URL, computes `canManage`, renders `UserDetailView`.
+3. Each section is its own `<form action={boundServerAction}>`:
+   - **Profile** → `updateUserAction` → `PUT /api/admin/users/{id}`.
+   - **Avatar upload** → `uploadAvatarAction` (multipart) → `POST /api/admin/users/{id}/avatar`.
+   - **Remove avatar** → `removeAvatarAction` → `DELETE /api/admin/users/{id}/avatar`.
+   - **Suspend/Activate** → `setStatusAction` (hidden `isActive` field) → `POST /api/admin/users/{id}/status`.
+4. On success the action `revalidatePath`s the detail route so the page re-renders with fresh server data; the form's `useActionState` shows an inline success/error banner.
+
+### Auth call-chain summary
+Browser `/users/{id}` → `middleware.ts` (admin gate) → server component → `serverFetch` → backend `[AdminOnly]` → `AdminUsersController` → `AdminUsersService` / `UserProfileService` → Postgres + `IFileStorage`. Mutations additionally pass `[RequirePermission("Users.Manage")]`; a plain admin without that grant sees the read-only banner and gets a `403`-mapped message if they somehow submit.
+
+### Extended — social report, posts moderation, per-user messaging
+The detail page now also surfaces the social graph and lets an admin message the user (privacy is bypassed — the admin sees everything regardless of public/private).
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET    | `/api/admin/users/{id}/posts` | the user's posts (moderation grid) |
+| DELETE | `/api/admin/posts/{postId}`   | delete a post (needs `Posts.Moderate`) |
+| POST   | `/api/admin/users/{id}/notify` | send an FCM push |
+| POST   | `/api/admin/users/{id}/notice` | create an in-app notice |
+| POST   | `/api/admin/users/{id}/email`  | email the user |
+
+- `lib/api/types.ts` — `AdminUserDetail` gains `accountType` + `followersCount`/`followingCount`/`postsCount`; new `AdminPost` / `AdminPostList`.
+- `page.tsx` — additionally `serverFetch`es `GET /api/admin/users/{id}/posts` and resolves each post image URL server-side; passes `posts` to the view.
+- `user-detail-form.tsx` — adds a follower/following/post **stat row**, a **posts thumbnail grid** (`PostCell`, each with its own `useActionState` delete bound to `deletePostAction(userId, postId)`), and a **"Message this user"** section with three forms — push / in-app notice / email — each a `useActionState`-backed `MessageForm`.
+- `actions.ts` — new server actions `notifyUserAction`, `noticeUserAction`, `emailUserAction`, `deletePostAction`.
+
+## Create Post Module — DONE (moderation queue + Fake-vs-Real hub)
+
+Two pages, both server components reading via `serverFetch`; mutations are server actions
+returning `{ ok?, error? }` consumed by client components with `useActionState`.
+
+### Post moderation — `/posts`
+- `app/(admin)/posts/page.tsx` — server component, `serverFetch`es
+  `GET /api/admin/post-reports?status=&cursor=` (`PostReportList`), renders a `DataTable`;
+  status pills (`open` / `resolved` / `all`) reload the page; keyset pagination.
+- `report-actions.tsx` (client) — per-row resolution form: a shared `reason` textarea +
+  four submit buttons (`dismiss` / `removePost` / `withholdAccount` / `sendNotice`); the
+  clicked button's `value` is the action.
+- `actions.ts` — `resolveReportAction(reportId, prev, formData)` →
+  `PATCH /api/admin/post-reports/{id}` `{ action, reason }`.
+
+### Fake vs Real — `/fvr`
+- `app/(admin)/fvr/page.tsx` — server component: renders the composer + an upload-access
+  candidate `DataTable` from `GET /api/admin/fvr-candidates` (`FvrCandidateList`).
+- `composer.tsx` (client) — caption + multi-file input + three reference-link inputs →
+  `createFvrPostAction`.
+- `grant-access.tsx` (client) — Grant / Revoke button → `grantFvrAccessAction`.
+- `actions.ts`:
+  - `createFvrPostAction(prev, formData)` — runs the **signed-URL media pipeline
+    server-side** for every file (`POST /api/media/uploads` → `PUT /api/media/blob/{id}`
+    raw bytes → `POST /api/media/finalize`), then `POST /api/admin/posts`
+    `{ mediaAssetIds, caption, references }`.
+  - `grantFvrAccessAction(userId, prev, formData)` →
+    `POST /api/admin/users/{id}/fake-vs-real-access` `{ granted }`.
+
+`lib/api/types.ts` — `AdminPost` updated (`coverUrl`/`type`/`kind`, was `imageUrl`); new
+`PostReport`/`PostReportList`, `FvrCandidate`/`FvrCandidateList`. Sidebar `/posts` + `/fvr`
+nav entries already existed. The signed-URL pipeline is driven from the **server action**
+because the admin auth token lives in an HTTP-only cookie the browser cannot read.
+
 ## Pending Modules
 
 To be filled in as they land:
 
-- Posts moderation (task 11.4)
 - Pre-publish approval queue (task 11.9-13)
-- Fake-vs-Real composer (task 11.14)
 - Analytics dashboard (task 11.15-17)
 - Broadcast announcements composer (task 11.18-21)
 - Admin-to-user email composer (task 11.22-24)

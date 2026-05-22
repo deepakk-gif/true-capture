@@ -17,6 +17,9 @@ class ErrorHandler {
   }
 
   static ResponseError _fromDio(DioException e) {
+    // ErrorInterceptor may have already mapped the failure — respect it.
+    final mapped = e.error;
+    if (mapped is ResponseError) return mapped;
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:

@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using TrueCapture.Infrastructure.Data;
@@ -31,7 +32,7 @@ public sealed class AuthServiceExtensionsTests : IDisposable
 
         var baseSvc = new BaseService<AppDbContext>(_db, Substitute.For<IErrorLogger>());
         _email = Substitute.For<IEmailSender>();
-        _otps  = new OtpService(_db, baseSvc, _email);
+        _otps  = new OtpService(_db, baseSvc, _email, Substitute.For<IHostEnvironment>());
 
         var jwt = Options.Create(new JwtOptions
         {
@@ -40,7 +41,9 @@ public sealed class AuthServiceExtensionsTests : IDisposable
         });
         var googleOpt = Options.Create(new GoogleAuthOptions { ClientId = "" });
 
-        _sut = new AuthService(_db, baseSvc, new TokenService(jwt), _otps, googleOpt);
+        _sut = new AuthService(
+            _db, baseSvc, new TokenService(jwt), _otps,
+            Substitute.For<IUserDeviceService>(), googleOpt);
     }
 
     [Fact]

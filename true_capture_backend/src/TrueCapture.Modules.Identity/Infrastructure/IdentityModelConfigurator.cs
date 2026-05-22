@@ -20,6 +20,9 @@ public sealed class IdentityModelConfigurator : IEntityModelConfigurator
             e.Property(x => x.AvatarUrl).HasMaxLength(512);
             e.Property(x => x.Bio).HasMaxLength(1000);
             e.Property(x => x.GoogleSubject).HasMaxLength(128);
+            e.Property(x => x.Gender).HasConversion<int>();
+            e.Property(x => x.AccountType).HasConversion<int>()
+                .HasDefaultValue(AccountType.Public).IsRequired();
             e.Property(x => x.RowVersion).IsConcurrencyToken();
             e.HasIndex(x => x.Email).IsUnique();
             e.HasIndex(x => x.Username).IsUnique();

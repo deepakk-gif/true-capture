@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(openspec status *)",
-      "Bash(openspec validate *)"
+      "Bash(openspec validate *)",
+      "Bash(flutter analyze *)",
+      "Bash(npm install *)",
+      "Bash(ls -la admin_panel_flow.md)",
+      "Bash(ls true_capture_backend/docs)",
+      "Bash(npm run *)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(./node_modules/.bin/next lint *)",
+      "Bash(grep -E \"^\\(tsc|next\\)$\")",
+      "Bash(grep -i \"\\\\.cs$\")",
+      "Bash(dotnet build *)",
+      "Bash(dotnet ef *)"
     ]
   }
 }

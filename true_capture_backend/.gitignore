@@ -27,3 +27,7 @@ Thumbs.db
 TestResults/
 coverage*
 *.trx
+
+# Local file-storage uploads (avatars, etc.) — see docs/file-storage.md
+storage/
+src/*/storage/

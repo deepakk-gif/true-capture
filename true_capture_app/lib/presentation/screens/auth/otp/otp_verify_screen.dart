@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../config/app_config.dart';
 import '../../../../core/constants/api_endpoints.dart';
 import '../../../common_widgets/custom_app_bar.dart';
 import '../../../common_widgets/custom_otp_field.dart';
@@ -26,6 +27,22 @@ class OtpVerifyScreen extends ConsumerStatefulWidget {
 class _OtpVerifyScreenState
     extends BaseConsumerState<OtpVerifyScreen, OtpViewModel> {
   @override
+  void onModelReady(OtpViewModel model) {
+    // Localhost testing: the backend's Development env accepts a fixed OTP, so
+    // submit it once automatically. `onModelReady` fires exactly once (post
+    // first frame) from this stable screen state — unlike the old field-level
+    // auto-submit, it cannot re-fire when the widget tree rebuilds.
+    if (AppConfig.isLocal) {
+      model.verify(
+        context,
+        email: widget.email,
+        code: AppConfig.localTestOtp,
+        purpose: widget.purpose,
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isReset = widget.purpose == OtpPurpose.passwordReset;
     return Scaffold(
@@ -48,6 +65,8 @@ class _OtpVerifyScreenState
                   Text('Sent to ${widget.email}'),
                   const SizedBox(height: 32),
                   CustomOtpField(
+                    initialValue:
+                        AppConfig.isLocal ? AppConfig.localTestOtp : null,
                     onCompleted: (code) => viewModel.verify(
                       context,
                       email:   widget.email,

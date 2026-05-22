@@ -27,10 +27,13 @@ export async function serverFetch<T>(
     url.searchParams.set(k, String(v));
   }
 
+  // For multipart uploads, let fetch set Content-Type (with the boundary) itself.
+  const isFormData = init.body instanceof FormData;
+
   const res = await fetch(url, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(access ? { Authorization: `Bearer ${access}` } : {}),
       ...(init.headers ?? {}),
     },
@@ -44,4 +47,14 @@ export async function serverFetch<T>(
   }
 
   return (await res.json()) as T;
+}
+
+/**
+ * Resolves a possibly-relative backend media path (e.g. "/media/avatars/x.jpg")
+ * into an absolute URL against the API base. Absolute URLs (S3/CDN) pass through.
+ */
+export function resolveMediaUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return new URL(path, BASE_URL).toString();
 }

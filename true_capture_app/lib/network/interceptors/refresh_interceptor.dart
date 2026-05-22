@@ -81,11 +81,22 @@ class RefreshInterceptor extends Interceptor {
     final data = res.data ?? const {};
     final access  = (data['accessToken']  ?? data['access_token'])  as String?;
     final refresh = (data['refreshToken'] ?? data['refresh_token']) as String?;
+    final expiry  = data['accessExpiresAtUtc'] ?? data['access_expires_at_utc'];
     if (access == null || access.isEmpty) return null;
 
     await _storage.write(StorageKeys.accessTokenKey, access);
     if (refresh != null && refresh.isNotEmpty) {
       await _storage.write(StorageKeys.refreshTokenKey, refresh);
+    }
+    // Keep the locally-cached expiry accurate after a silent token rotation,
+    // so the next launch's local validity check uses the fresh token's expiry.
+    final parsedExpiry =
+        expiry == null ? null : DateTime.tryParse(expiry.toString());
+    if (parsedExpiry != null) {
+      await _storage.write(
+        StorageKeys.accessExpiresAtKey,
+        parsedExpiry.toUtc().toIso8601String(),
+      );
     }
     return access;
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/constants/app_motion.dart';
 import '../../../core/constants/color_helper.dart';
 import '../../../core/router/app_router.dart';
 import '../../providers/local_storage_provider.dart';
@@ -133,6 +135,7 @@ class _IntroPage extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
+        // Staggered fade + slight rise — see the flutter-widget-animation skill.
         children: [
           Icon(data.icon, size: 96, color: ColorHelper.primary),
           const SizedBox(height: 24),
@@ -143,7 +146,10 @@ class _IntroPage extends StatelessWidget {
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge,
           ),
-        ],
+        ].animate(interval: AppMotion.stagger).fadeIn(
+              duration: AppMotion.normal,
+              curve: AppMotion.enter,
+            ).slideY(begin: 0.12, end: 0, curve: AppMotion.enter),
       ),
     );
   }

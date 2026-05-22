@@ -9,6 +9,7 @@ import '../../../../services/local_service.dart';
 import '../../../providers/local_storage_provider.dart';
 import '../../../providers/user_data_provider.dart';
 import '../../base/base_view_model.dart';
+import '../../base/screen_state.dart';
 
 class SignUpViewModel extends BaseViewModel {
   SignUpViewModel(this._authRepository, this._storage, this._authStateNotifier);
@@ -24,6 +25,7 @@ class SignUpViewModel extends BaseViewModel {
     required String password,
   }) async {
     await executeWithLoading(
+      errorState: ScreenState.content,
       operation: () async {
         final fcmToken = await FirebaseService.cachedToken(_storage);
         final response = await _authRepository.signUp(
@@ -41,6 +43,7 @@ class SignUpViewModel extends BaseViewModel {
         await _authStateNotifier.saveToken(
           response.accessToken,
           refreshToken: response.refreshToken,
+          accessExpiresAtUtc: response.accessExpiresAtUtc,
         );
         await _storage.write(StorageKeys.pendingVerifyEmailKey, email);
 

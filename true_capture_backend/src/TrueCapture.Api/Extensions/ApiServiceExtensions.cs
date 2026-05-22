@@ -10,7 +10,9 @@ using TrueCapture.Infrastructure.Extensions;
 using TrueCapture.Infrastructure.Seeding;
 using TrueCapture.Modules.Identity.Extensions;
 using TrueCapture.Modules.Identity.Services;
+using TrueCapture.Modules.Messaging.Extensions;
 using TrueCapture.Modules.Notifications.Extensions;
+using TrueCapture.Modules.Social.Extensions;
 using TrueCapture.Modules.Users.Extensions;
 using TrueCapture.Shared.Constants;
 
@@ -24,8 +26,11 @@ public static class ApiServiceExtensions
         services.AddIdentityModule(cfg);
         services.AddUsersModule(cfg);
         services.AddNotificationsModule(cfg);
+        services.AddSocialModule(cfg);
+        services.AddMessagingModule(cfg);
 
         services.AddControllers();
+        services.AddSignalR();
         services.AddEndpointsApiExplorer();
 
         services.AddSwaggerGen(opt =>
@@ -53,6 +58,10 @@ public static class ApiServiceExtensions
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(opt =>
             {
+                // Keep claims verbatim — without this the handler rewrites `sub`
+                // to ClaimTypes.NameIdentifier, so `User.FindFirst("sub")` (used by
+                // CurrentUserId / CurrentUser) returns null and resolves to user 0.
+                opt.MapInboundClaims = false;
                 opt.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer           = true,
@@ -67,6 +76,22 @@ public static class ApiServiceExtensions
                             : jwt.SigningKey)),
                     NameClaimType            = JwtClaims.Name,
                     RoleClaimType            = JwtClaims.Role,
+                };
+
+                // SignalR (WebSockets) can't send an Authorization header — accept the
+                // JWT from the `access_token` query string for the chat hub.
+                opt.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = ctx =>
+                    {
+                        var token = ctx.Request.Query["access_token"];
+                        if (!string.IsNullOrEmpty(token) &&
+                            ctx.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                        {
+                            ctx.Token = token;
+                        }
+                        return Task.CompletedTask;
+                    },
                 };
             });
 

@@ -81,6 +81,27 @@ public sealed class UserDeviceService(
             return Result<bool>.Success(true);
         }, ct, useTransaction: false);
 
+    public async Task PushToUserAsync(long userId, NotificationPayload payload, CancellationToken ct)
+    {
+        try
+        {
+            var tokens = await db.Set<UserDevice>().AsNoTracking()
+                .Where(d => d.UserId == userId)
+                .Select(d => d.FcmToken)
+                .ToListAsync(ct);
+            if (tokens.Count == 0) return;
+
+            var result = await fcm.SendToTokensAsync(tokens, payload, ct);
+            if (result.InvalidTokens.Count > 0)
+                await PruneInvalidAsync(result.InvalidTokens, ct);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort — a push failure must never break the calling flow.
+            log.LogWarning(ex, "Push to user {UserId} failed", userId);
+        }
+    }
+
     public async Task PruneInvalidAsync(IReadOnlyList<string> invalidTokens, CancellationToken ct)
     {
         if (invalidTokens.Count == 0) return;

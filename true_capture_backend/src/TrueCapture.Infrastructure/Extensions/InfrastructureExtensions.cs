@@ -35,6 +35,10 @@ public static class InfrastructureExtensions
         services.AddScoped<IAuditLogger,  AuditLogger>();
         services.AddScoped<ICacheService, CacheService>();
 
+        // File storage — local-disk provider by default; see docs/file-storage.md for S3.
+        services.Configure<StorageOptions>(cfg.GetSection(StorageOptions.SectionName));
+        services.AddSingleton<IFileStorage, LocalFileStorage>();
+
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
         services.AddSingleton<IAuthorizationHandler, FeatureAuthorizationHandler>();

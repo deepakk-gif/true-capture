@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(DOTNET_ROLL_FORWARD=Major dotnet ef --version)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -U postgres -d true_capture -tAc '\\\\dt')",
+      "Bash(PGPASSWORD=postgres psql -h localhost -U postgres -d true_capture -tAc 'SELECT \"MigrationId\" FROM \"__EFMigrationsHistory\"')",
+      "Bash(break)",
+      "Bash(flutter analyze *)"
+    ]
+  }
+}

@@ -7,6 +7,8 @@ class StorageKeys {
 
   static const String accessTokenKey = 'access_token';
   static const String refreshTokenKey = 'refresh_token';
+  static const String accessExpiresAtKey = 'access_expires_at';
+  static const String userProfileKey = 'user_profile';
   static const String isFirstSignUpDoneKey = 'check_first_sign_up_done';
   static const String isFirstIntroDoneKey = 'check_first_intro_done_value';
   static const String themeModeKey = 'theme_mode';
@@ -19,6 +21,7 @@ class StorageKeys {
   static const String pendingVerifyEmailKey = 'pending_verify_email';
   static const String fcmTokenKey = 'fcm_token';
   static const String deviceTypeKey = 'device_type';
+  static const String recentSearchesKey = 'recent_searches';
 }
 
 final localStorageServiceProvider = Provider<LocalStorageService>((ref) {

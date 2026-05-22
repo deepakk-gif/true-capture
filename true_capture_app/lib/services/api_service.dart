@@ -48,8 +48,24 @@ class ApiService with NetworkParseHelper {
   Future<Response<T>> post<T>(String path, {Object? data}) =>
       dio.post<T>(path, data: data);
 
+  /// Multipart POST for file uploads. Dio sets the `multipart/form-data`
+  /// content-type (with boundary) automatically from the [FormData] body.
+  Future<Response<T>> postMultipart<T>(String path, FormData formData) =>
+      dio.post<T>(path, data: formData);
+
   Future<Response<T>> put<T>(String path, {Object? data}) =>
       dio.put<T>(path, data: data);
+
+  /// Raw-bytes PUT — used by the signed-URL media pipeline to upload a file's
+  /// content to a reserved slot. Streams [bytes] with an octet-stream type.
+  Future<Response<T>> putBytes<T>(String path, List<int> bytes) => dio.put<T>(
+        path,
+        data: Stream<List<int>>.fromIterable([bytes]),
+        options: Options(
+          contentType: 'application/octet-stream',
+          headers: {Headers.contentLengthHeader: bytes.length},
+        ),
+      );
 
   Future<Response<T>> patch<T>(String path, {Object? data}) =>
       dio.patch<T>(path, data: data);

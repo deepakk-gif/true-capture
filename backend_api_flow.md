@@ -11,6 +11,7 @@
   - `TrueCapture.Infrastructure` — `AppDbContext` (EF Core), seeders, model configurators.
   - `TrueCapture.Modules.*` — feature modules (each owns its entities, services, controllers, model config, seeder).
 - **Pipeline** (`Program.cs`): Serilog → CORS → Authentication → Authorization → RateLimiter → MapControllers + `/api/health`. Migrations + seeding run on dev startup when `RunMigrationsOnStartup=true`.
+- **JWT claims**: `AddJwtBearer` sets `MapInboundClaims = false` so claims stay verbatim (`sub`, `email`, `name`, `role`). Without it the handler rewrites `sub` → `ClaimTypes.NameIdentifier` and `BaseController.CurrentUserId` / `CurrentUser.UserId` (both read `"sub"`) resolve to `0`. `CurrentUserId` also falls back to `ClaimTypes.NameIdentifier` defensively.
 - **Module wiring**: each module exposes `AddXxxModule(IServiceCollection, IConfiguration)`. Identity registers `JwtOptions`, `ITokenService`, `IAuthService`, the model configurator, and a system data seeder.
 
 ---
@@ -83,7 +84,7 @@ All return `Result<AuthTokensDto>` (or `Result<bool>` for logout) wrapped by `Ba
 
 ### Data model (Identity)
 
-- `User` — Email, Username, PasswordHash, DisplayName?, AvatarUrl?, Bio?, EmailVerified, IsActive, IsAdmin, IsVerified, GoogleSubject?, LastLoginAtUtc?
+- `User` — Email, Username, PasswordHash, DisplayName?, AvatarUrl?, Bio?, EmailVerified, IsActive, IsAdmin, IsVerified, GoogleSubject?, LastLoginAtUtc?, Gender? (enum), AccountType (enum, default Public)
 - `Role` — Code, Name, Description?, IsSystem
 - `Permission` / `RolePermission` / `UserRole` — RBAC join tables
 - `RefreshToken` — UserId, TokenHash, ExpiresAtUtc, RevokedAtUtc?, ReplacedByHash?, UserAgent?, IpAddress?, computed `IsActive`
@@ -139,13 +140,15 @@ New methods on `IAuthService`: `VerifyOtpAndIssueAsync`, `ForgotPasswordAsync`, 
 ### OtpService (`Services/OtpService.cs` implementing `IOtpService`)
 
 - `record OtpSendRequest(Email, Purpose)` / `OtpVerifyRequest(Email, Code, Purpose)` / `OtpVerifyResult(User?, Purpose)`
+- Constructor also depends on `IHostEnvironment env` (for the dev fixed-code path below).
 - `SendAsync` (transactional, op name `Otp.Send`):
   1. Lowercase + trim email.
   2. Rate-limit: rolling 60-min window, max 5 sends per (email, purpose) → `Result.Validation` on overflow.
   3. Look up `User` by email; for `PasswordReset` on unknown email, return `Success(true)` without dispatching (no enumeration leak).
-  4. Generate 6-digit code via `RandomNumberGenerator`, SHA256-hash; persist `OtpCode` row with 10-minute expiry.
+  4. Generate the code: in **Development** (`env.IsDevelopment()`) it is the fixed const `DevFixedCode = "123456"` so localhost testing skips a real inbox; otherwise a 6-digit `RandomNumberGenerator` code. SHA256-hash it; persist `OtpCode` row with 10-minute expiry.
   5. Dispatch via `IEmailSender.SendAsync` with purpose-specific subject.
 - `VerifyAsync` (transactional, op name `Otp.Verify`):
+  0. **Development bypass**: when `env.IsDevelopment()` and the submitted code equals `DevFixedCode` (`"123456"`), the row hash check is skipped entirely — resolve the `User` by email, burn any pending `OtpCode` rows (`UsedAtUtc = now`), flip `EmailVerified` for `VerifyEmail`, and return `Success`. This makes localhost testing work even with a stale or missing OTP row (e.g. mobile auto-submit firing before send-otp, or rows created before the dev fixed-code path landed).
   1. Load most-recent unused row for `(email, purpose)`.
   2. Check expiry; reject if past `ExpiresAtUtc`.
   3. Enforce `MaxVerifyAttempts = 5` per row; over-limit returns `Unauthorized("Too many attempts.")`.
@@ -363,6 +366,237 @@ All return `Result<SendNotificationResultDto>` with `{ SentCount, FailedCount, I
 
 `ApiServiceExtensions.AddTrueCapture` will gain `services.AddNotificationsModule(cfg)` next to `AddUsersModule` once the Notifications module project lands.
 
+## File Storage (shared) — DONE
+
+Pluggable blob storage. The shipped provider writes to local disk and serves files as static files; production swaps in an S3 provider with no caller changes — see `docs/file-storage.md`.
+
+| Concern | Path |
+|---|---|
+| Abstraction | `src/TrueCapture.Shared/Services/IFileStorage.cs` — `record StoredFile(Url, Key)` + `SaveAsync(stream, fileName, contentType, folder, ct)` / `DeleteAsync(urlOrKey, ct)` |
+| Options | `src/TrueCapture.Infrastructure/Services/StorageOptions.cs` — binds `appsettings.json#Storage` (`Provider`, `PublicBaseUrl`, `Local{RootPath,RequestPath}`, `S3{...}`) |
+| Local impl | `src/TrueCapture.Infrastructure/Services/LocalFileStorage.cs` — writes under `{ContentRoot}/storage`, returns URL `{PublicBaseUrl}{RequestPath}/{folder}/{guid}.{ext}` (root-relative when `PublicBaseUrl` is empty); randomised filenames; best-effort `DeleteAsync` |
+| Static-file wiring | `src/TrueCapture.Infrastructure/Extensions/StorageStartupExtensions.cs#UseFileStorage` — serves the local root at `RequestPath` (`/media`); no-op for non-Local providers. Called in `Program.cs` after `UseSerilogRequestLogging` |
+| DI | `InfrastructureExtensions.AddInfrastructure` — `Configure<StorageOptions>` + `AddSingleton<IFileStorage, LocalFileStorage>` |
+
+Config (`appsettings.json#Storage`): `Provider` (`Local`), `PublicBaseUrl`, `Local:RootPath` (`storage`), `Local:RequestPath` (`/media`), plus an `S3` placeholder block.
+
+---
+
+## Users Module — EXTENDED (self profile + avatar + admin user management)
+
+### Self profile — `UsersController` (`Controllers/UsersController.cs`)
+Base route `/api/users`, all `[Authorize]` (any signed-in user). Service: `IUserProfileService` / `UserProfileService`.
+
+| Method | Route | DTO in | Service call |
+|---|---|---|---|
+| GET    | `/api/users/me`        | — | `UserProfileService.GetAsync(CurrentUserId)` |
+| PUT    | `/api/users/me`        | `UpdateProfileRequest(DisplayName?, Bio?, Gender?, AccountType?)` | `UserProfileService.UpdateAsync(CurrentUserId, req)` |
+| POST   | `/api/users/me/avatar` | multipart `file` (`IFormFile`), `RateLimitPolicies.Upload` | `UserProfileService.SetAvatarAsync(CurrentUserId, AvatarUpload)` |
+| DELETE | `/api/users/me/avatar` | — | `UserProfileService.RemoveAvatarAsync(CurrentUserId)` |
+
+All return `Result<UserProfileResponse>`:
+`(Id, Email, Username, DisplayName, AvatarUrl, Bio, JoinedAtUtc, FollowersCount, FollowingCount, PostsCount, IsSuspended, IsBlueTick, AccountType, Gender, EmailVerified, IsAdmin)`.
+- `JoinedAtUtc` = `User.CreatedAtUtc`; `IsSuspended` = `!User.IsActive`; `IsBlueTick` = `User.IsVerified`.
+- `FollowersCount` / `FollowingCount` / `PostsCount` are read straight from the denormalized counter columns on `User` (see below) — no per-request `COUNT(*)`.
+- `AccountType` is a lowercase string (`"public"` / `"private"`); `Gender` is `"male"` / `"female"` / `"other"` / null. Enums map to strings in the DTO — no global `JsonStringEnumConverter`.
+
+**New `User` columns** (`Entities/User.cs`): `Gender? Gender` (enum `Male=1,Female=2,Other=3`, nullable) and `AccountType AccountType` (enum `Public=1,Private=2`, default `Public`). EF mapping in `IdentityModelConfigurator` mirrors the `OtpPurpose` pattern — `HasConversion<int>()`; `AccountType` also `HasDefaultValue(AccountType.Public)`. Migration: `20260521102909_AddUserProfileFields` (nullable `Gender int`, non-null `AccountType int default 1`).
+
+**Denormalized social counters** (`Entities/User.cs`): `FollowersCount`, `FollowingCount`, `PostsCount` (`int`, default `0`). Maintained transactionally — never recomputed on read:
+- `SocialService.FollowAsync` / `UnfollowAsync` / `AcceptRequestAsync` shift `FollowersCount` + `FollowingCount` by ±1 **only for accepted edges** (a pending follow request does not count until accepted) via `AdjustFollowCountsAsync` → EF `ExecuteUpdateAsync` (`SET col = col ± 1`), so concurrent follows of the same user don't collide on the row-version token.
+- `PostService.CreateAsync` / `RemoveAsync` shift `PostsCount` by ±1 the same way.
+- Each adjustment runs inside the same transaction as the follow/post mutation. Migration: `20260521142221_AddUserCounters` adds the three columns and backfills existing rows from the `Follow` / `Post` tables.
+
+`UserProfileService` (`Services/UserProfileService.cs`, implements `IUserProfileService`) — depends on `AppDbContext`, `IBaseService`, `IFileStorage`. All methods take an explicit `userId` so they serve both the self endpoints and the admin avatar endpoints:
+- `GetAsync` (op `UserProfile.Get`): loads `User`, `NotFound` if missing.
+- `UpdateAsync` (op `UserProfile.Update`, transactional): trims + length-validates (`DisplayName` ≤ 80, `Bio` ≤ 500), full-replace of those columns (blank → null). Parses `Gender` (blank → cleared; unknown → `Validation`) and `AccountType` (blank → unchanged; unknown → `Validation`) via the case-insensitive `ParseEnum<TEnum>` helper.
+- `SetAvatarAsync` (op `UserProfile.SetAvatar`, transactional): `AvatarRules.Validate` (≤ 5 MB, JPEG/PNG/WebP) → `IFileStorage.SaveAsync(folder "avatars")` → set `User.AvatarUrl` → best-effort `DeleteAsync` of the previous file.
+- `RemoveAvatarAsync` (op `UserProfile.RemoveAvatar`, transactional): clears `AvatarUrl`, best-effort deletes the old file.
+- `AvatarUpload(Stream, FileName, ContentType, Length)` — controller-agnostic upload record, built from `IFormFile` in the controller.
+- `AvatarRules` (`Services/AvatarRules.cs`) — shared `MaxBytes` (5 MB), allowed content types, `Folder` ("avatars"), `Validate(contentType, length)`.
+
+### Admin user management — `AdminUsersController` (`Controllers/AdminUsersController.cs`)
+Existing `GET /api/admin/users` (list) unchanged. New endpoints — all `[AdminOnly]`; mutations also `[RequirePermission("Users.Manage")]`. Controller now also depends on `IUserProfileService` (for the avatar endpoints).
+
+| Method | Route | Auth | DTO in | Service call |
+|---|---|---|---|---|
+| GET    | `/api/admin/users/{id}`        | `[AdminOnly]` | — | `AdminUsersService.GetDetailAsync(id)` |
+| PUT    | `/api/admin/users/{id}`        | + `Users.Manage` | `AdminUpdateUserRequest(DisplayName?, Bio?)` | `AdminUsersService.UpdateAsync(id, req)` |
+| POST   | `/api/admin/users/{id}/status` | + `Users.Manage` | `SetUserStatusRequest(IsActive)` | `AdminUsersService.SetStatusAsync(id, isActive)` |
+| POST   | `/api/admin/users/{id}/avatar` | + `Users.Manage` | multipart `file`, `RateLimitPolicies.Upload` | `UserProfileService.SetAvatarAsync(id, AvatarUpload)` |
+| DELETE | `/api/admin/users/{id}/avatar` | + `Users.Manage` | — | `UserProfileService.RemoveAvatarAsync(id)` |
+
+Detail/update/status return `Result<AdminUserDetail>` — `(Id, Email, Username, DisplayName, AvatarUrl, Bio, EmailVerified, IsActive, IsAdmin, IsVerified, HasGoogle, LastLoginAtUtc, CreatedAtUtc)`. Avatar endpoints return `Result<UserProfileResponse>` (shared service). `SetStatus` rejects with `Validation` when `id == CurrentUserId` (an admin cannot suspend themselves).
+
+`AdminUsersService` (`Services/AdminUsersService.cs`) gained `GetDetailAsync` (op `AdminUsers.GetDetail`), `UpdateAsync` (op `AdminUsers.Update`, transactional), `SetStatusAsync` (op `AdminUsers.SetStatus`, transactional) + a `MapDetail` projector.
+
+DI (`Extensions/UsersServiceExtensions.cs#AddUsersModule`): added `services.AddScoped<IUserProfileService, UserProfileService>()`.
+
+No DB migration — `User.AvatarUrl/DisplayName/Bio` already exist; no new permission — reuses the seeded `Users.Manage`.
+
+## Social Module — DONE (search, follow graph, profiles, posts)
+
+New project `TrueCapture.Modules.Social` (references Shared, Infrastructure, Identity; registered via `AddSocialModule` in `ApiServiceExtensions`). One `SocialModelConfigurator` (`IEntityModelConfigurator`).
+
+### Entities
+- `Follow` (`Entities/Follow.cs`) — `FollowerId`, `FolloweeId`, `Status` (`FollowStatus` enum `Accepted=1, Pending=2`). Table `social.Follow`; unique index `(FollowerId, FolloweeId)`; FKs to `User` (cascade).
+- `Post` (`Entities/Post.cs`) — `AuthorId`, `ImageUrl`, `Caption?` (≤2200). Table `social.Post`; index `(AuthorId, Id)`; FK to `User` (cascade).
+
+### Endpoints — all `[Authorize]`, return `Result<T>`
+| Method | Route | Service | Notes |
+|---|---|---|---|
+| GET    | `/api/users/search?q=&limit=` | `SocialService.SearchAsync` | username/displayName substring, excl. self; items carry ≤2 `mutualFollowers` + count + `followState` |
+| GET    | `/api/users/{id}` | `SocialService.GetProfileAsync` | `UserProfileView` — counts, `followState`, `followsMe`, `isMe`, `canViewContent` |
+| POST   | `/api/users/{id}/follow` | `SocialService.FollowAsync` | public → `Accepted`; private → `Pending`; FCM push to `{id}` |
+| DELETE | `/api/users/{id}/follow` | `SocialService.UnfollowAsync` | unfollow / cancel request |
+| GET    | `/api/users/{id}/followers` `following` `posts` | `SocialService.*` | 403 when `!canViewContent` (private + not following) |
+| GET    | `/api/follow/requests` | `SocialService.GetFollowRequestsAsync` | incoming pending |
+| POST   | `/api/follow/requests/{requesterId}/accept` `reject` | `SocialService.Accept/RejectRequestAsync` | accept pushes the requester |
+| POST   | `/api/posts` | `PostService.CreateAsync` | multipart `file` + `caption`; image via `IFileStorage` folder `posts`; `RateLimitPolicies.Upload` |
+| DELETE | `/api/posts/{id}` | `PostService.DeleteAsync` | author-only |
+| GET    | `/api/admin/users/{id}/posts` | `PostService.GetByUserAsync` | `[AdminOnly]` — privacy bypassed |
+| DELETE | `/api/admin/posts/{id}` | `PostService.AdminDeleteAsync` | `[AdminOnly]` + `[RequirePermission("Posts.Moderate")]` |
+
+Controllers: `SocialController` (search/profile/follow/lists/requests/user-posts), `PostsController` (`/api/posts`), `AdminPostsController` (admin post moderation). Services: `SocialService`, `PostService` — wrap `IBaseService.ExecuteAsync`. `canViewContent` = self OR public OR accepted-follower is the single privacy gate. Mutual followers = accepted-follows whose follower the viewer also follows. Cursor pagination is keyset by descending id (`Services/Paging.cs`).
+
+Follow-event pushes go through the new `IUserDeviceService.PushToUserAsync(userId, NotificationPayload)` (Identity) — best-effort, queries the user's `UserDevice` tokens → `IFcmSender.SendToTokensAsync` → prunes invalid. Data payload `type` = `follow_request` / `new_follower` / `follow_accepted`.
+
+`UserProfileService`, `SocialService.GetProfileAsync`, and `AdminUsersService` read follower/following/post counts straight from the denormalized `User.FollowersCount` / `FollowingCount` / `PostsCount` columns (maintained by `SocialService` / `PostService` — see the Users module section); `AdminUserDetail` also exposes `AccountType` + the three counts.
+
+## Notifications Module — EXTENDED (in-app notices + per-user admin messaging)
+
+- New entity `AppNotice` (`Entities/AppNotice.cs`) — `RecipientUserId`, `Title`, `Body`, `IsRead`. Table `notifications.AppNotice` via the new `NotificationsModelConfigurator`.
+- `INoticeService` / `NoticeService` — the user's in-app inbox. Endpoints (`NoticeController`, `[Authorize]`): `GET /api/notices?cursor=`, `GET /api/notices/unread-count`, `POST /api/notices/{id}/read`.
+- `IAdminUserMessagingService` / `AdminUserMessagingService` — per-user admin messaging via `AdminUserMessagingController` (`[Route("api/admin/users")]`, `[AdminOnly]` + `[RequirePermission("Users.Manage")]`):
+  - `POST /api/admin/users/{id}/notify` — FCM push (`SendUserNotificationDto`).
+  - `POST /api/admin/users/{id}/notice` — creates an `AppNotice` row (`SendUserNoticeDto`).
+  - `POST /api/admin/users/{id}/email` — emails the user via `IEmailSender` (`SendUserEmailDto`).
+- DI in `AddNotificationsModule`: `INoticeService`, `IAdminUserMessagingService`, `NotificationsModelConfigurator`.
+
+### Migration & permissions
+One migration `20260521112647_AddSocialAndNotices` (tables `Follow`, `Post`, `AppNotice`). No new permission codes — follow/post/notice user actions need only `[Authorize]`; admin messaging reuses `Users.Manage`; admin post deletion reuses the seeded `Posts.Moderate`.
+
+## Create Post Module — BACKEND DONE (media pipeline, posts, feed, engagement, moderation)
+
+Adds two post types — **Normal** (Home tab) and **Fake vs Real** (dedicated tab) — built
+on a signed-URL media pipeline. All entities live in `TrueCapture.Modules.Social`
+(schema `social`).
+
+### Data model
+- `MediaAsset` (`Entities/MediaAsset.cs`) — one uploaded photo/video. `OwnerId`,
+  `Kind {Photo,Video}`, `Status {Pending,Ready,Failed}`, `StorageKey`, `Url`,
+  `ThumbnailUrl`, `MimeType`, `ByteSize`, `DurationSeconds?`, `Width?`/`Height?`,
+  `CaptureMetadata` (jsonb), `ErrorCode?`.
+- `Post` (rewritten) — `Type {Normal,FakeVsReal}`, `Kind {Photo,Carousel,Video}`,
+  `IsAdminPost`, `Status {Live,PendingReview,Removed}`, `RemovalReason?`, `Caption?`,
+  `CoverUrl` (first-media thumbnail), `ShareId` (slug for `domain/post/{shareId}`),
+  counters `View/Likes/Comments/Shares/TrueVotes/FalseVotes`.
+- Join/edge tables: `PostMedia(PostId,MediaAssetId,Position)`,
+  `PostReference(PostId,Url,Position)` (Fake-vs-Real reference links),
+  `PostMention(PostId,MentionedUserId)`, `PostVote(PostId,UserId,Value)` unique,
+  `PostView(PostId,ViewerId)` unique, `PostSave(UserId,PostId)` unique,
+  `PostShare(UserId,PostId)`, `PostReport(PostId,ReporterId,Reason,OtherText?,Status)`,
+  `CommentLike(CommentId,UserId)` unique.
+- `Comment` gains `ParentCommentId?` (1-level replies) and `IsRemoved`.
+- `User` (Identity) gains `CanPostFakeVsReal`, `CreatorScore`,
+  `FvrCandidateNotifiedAtUtc` — `IsVerified` (blue tick) is set together with
+  `CanPostFakeVsReal` when an admin grants access.
+
+### Routes & flow
+
+All routes are `[Authorize]` unless noted. Flow: Controller → Service (`IBaseService.ExecuteAsync`
++ `Result<T>`) → `AppDbContext` (schema `social`).
+
+**Media pipeline** — `MediaController` (`api/media`) → `IMediaService` / `MediaService`:
+| Method | Route | Service | Notes |
+|---|---|---|---|
+| POST | `/api/media/uploads` | `RequestUploadAsync` | body `RequestUploadDto{mimeType,byteSize,kind}`; MIME allow-list (jpeg/png/webp, mp4/quicktime — GIF/audio rejected); 25 MB photo / 200 MB video → `413`; reserves slot + `MediaAsset(status=pending)`; returns `UploadTicket{uploadId,putUrl,expiresAtUtc}` |
+| PUT  | `/api/media/blob/{uploadId}` | `StoreBlobAsync` | raw body bytes → `IFileStorage.WriteAsync`; `RateLimitPolicies.Upload`; `[DisableRequestSizeLimit]` |
+| POST | `/api/media/finalize` | `FinalizeAsync` | body `FinalizeUploadDto{uploadId,captureMetadata}`; verifies bytes, sets `status=ready` (+ photo thumbnail); HLS transcoding deferred |
+
+`IFileStorage` gained `ReserveSlot` / `WriteAsync` / `ExistsAsync` (Shared + `LocalFileStorage`).
+
+**Posts** — `PostsController` → `IPostService` / `PostService` + `IEngagementService` + `IPostModerationService`:
+| Method | Route | Service | Notes |
+|---|---|---|---|
+| POST | `/api/posts` | `PostService.CreateAsync` | body `CreatePostRequest{type,mediaAssetIds,caption,references}`; validates media ready+owned, derives `Kind`, rejects mixed photo/video; Fake-vs-Real needs `User.CanPostFakeVsReal` + caption + ≥1 reference; parses `@mentions` (public/followed only); `RateLimitPolicies.Upload` |
+| GET | `/api/posts/{id}` | `EngagementService.GetPostAsync` | full `PostDto`; records a distinct `PostView` + bumps `ViewCount`; Fake-vs-Real bypasses the privacy gate |
+| DELETE | `/api/posts/{id}` | `PostService.DeleteAsync` | author-only; FK-cascades all dependents |
+| POST | `/api/posts/{id}/like` `save` `share` | `Engagement.Toggle*/ShareAsync` | like/save toggle; share records `PostShare` + returns `domain/post/{shareId}` |
+| POST | `/api/posts/{id}/vote` | `Engagement.VoteAsync` | body `VoteRequest{value}`; Fake-vs-Real only; one vote/user; maintains `True/FalseVotesCount` |
+| POST | `/api/posts/{id}/report` | `PostModeration.ReportPostAsync` | body `ReportPostRequest{reason,otherText}` |
+| GET/POST | `/api/posts/{id}/comments` | `Engagement.GetComments/AddCommentAsync` | `AddCommentRequest{text,parentCommentId}`; reply-to-reply rejected (1 level) |
+| GET | `/api/comments/{id}/replies` | `Engagement.GetRepliesAsync` | |
+| POST | `/api/comments/{id}/like` | `Engagement.ToggleCommentLikeAsync` | |
+| DELETE | `/api/comments/{id}` | `Engagement.DeleteCommentAsync` | author or post owner; soft delete (`IsRemoved`) |
+| GET | `/api/users/me/saves` | `Engagement.GetSavedAsync` | the caller's bookmarks |
+| GET | `/api/feed?channel=&cursor=` | `FeedService.GetAsync` | `FeedController`; `channel=home` (Normal) or `fake_vs_real`; keyset cursor |
+
+**Admin** — `AdminPostsController` (`[AdminOnly]`):
+| Method | Route | Service | Permission |
+|---|---|---|---|
+| POST | `/api/admin/posts` | `PostService.AdminCreateAsync` | `Posts.Create` — publishes a Fake-vs-Real post (`is_admin_post`) |
+| GET | `/api/admin/users/{id}/posts` | `PostService.GetByUserAsync` | `[AdminOnly]` |
+| DELETE | `/api/admin/posts/{id}` | `PostService.AdminDeleteAsync` | `Posts.Moderate` |
+| GET | `/api/admin/post-reports?status=` | `PostModeration.ListReportsAsync` | `Posts.Moderate` |
+| PATCH | `/api/admin/post-reports/{id}` | `PostModeration.ResolveReportAsync` | `Posts.Moderate` — `dismiss\|removePost\|withholdAccount\|sendNotice` |
+| GET | `/api/admin/fvr-candidates` | `PostModeration.ListFvrCandidatesAsync` | `Posts.Moderate` |
+| POST | `/api/admin/users/{id}/fake-vs-real-access` | `PostModeration.GrantFvrAccessAsync` | `Posts.Moderate` — sets `CanPostFakeVsReal` + `IsVerified` |
+
+**Creator-score milestone** — `CreatorScoreService` (config `CreatorScoreOptions` — section `CreatorScore`):
+recomputes `User.CreatorScore = FollowerWeight·followers + LikeWeight·likesReceived +
+UpvoteWeight·fvrUpVotes` after each like / vote; the first time it crosses `Threshold` for a
+user without access it stamps `FvrCandidateNotifiedAtUtc` and pushes an FCM alert to the
+`admins` topic (best-effort, via `IFcmSender`).
+
+DI in `AddSocialModule`: `IMediaService`, `IFeedService`, `ICreatorScoreService`,
+`IPostModerationService` + `CreatorScoreOptions`. Migration `20260522060437_AddCreatePostModule`
+adds the 10 new tables, the `Post`/`Comment`/`User` columns, and drops `Post.ImageUrl`.
+
+## Messaging Module — BACKEND DONE (1-to-1 chat, SignalR realtime)
+
+New project `TrueCapture.Modules.Messaging` (schema `messaging`; references Shared,
+Infrastructure, Identity). PRD Module 8. Wired via `AddMessagingModule` in
+`ApiServiceExtensions`; `AddSignalR()` + `app.MapHub<ChatHub>("/hubs/chat")`.
+
+### Data model
+- `Conversation` — denormalized `LastMessageAtUtc` / `LastMessagePreview` /
+  `LastMessageSenderId`.
+- `ConversationParticipant(ConversationId, UserId, IsPinned, PinnedAtUtc?,
+  LastReadMessageId?, UnreadCount)` — unique `(ConversationId,UserId)`; per-user
+  pin + read state.
+- `Message(ConversationId, SenderId, Type {Text,Image,Video}, Text?, MediaUrl?,
+  ThumbnailUrl?, MediaWidth?/Height?, ReplyToMessageId?)` — soft-deletable.
+- `MessageReaction(MessageId, UserId, Emoji)` — unique `(MessageId,UserId)`,
+  one reaction per user (replace / clear).
+- `MessagingModelConfigurator`; migration `AddMessagingModule`.
+
+### Realtime — SignalR `ChatHub` (`/hubs/chat`)
+Push-only typed hub (`Hub<IChatClient>`). Each connection joins group
+`user:{userId}` on connect. JWT over WebSocket: `JwtBearerEvents.OnMessageReceived`
+reads `?access_token=` for `/hubs` paths. Server→client events (`IChatClient`):
+`ReceiveMessage`, `MessageRead`, `ReactionUpdated`. `IChatNotifier` / `ChatNotifier`
+fans events out over SignalR (`IHubContext<ChatHub,IChatClient>`) **and** FCM data
+pushes (`{type:'message',conversationId,messageId,senderName}`) to the recipient's
+`UserDevice` tokens — best-effort.
+
+### Routes & flow (`[Authorize]`; Controller → Service → `AppDbContext`)
+| Method | Route | Service |
+|---|---|---|
+| GET  | `/api/conversations?cursor=` | `ConversationService.ListAsync` (recency cursor) |
+| POST | `/api/conversations` `{userId}` | `GetOrCreateDirectAsync` |
+| GET  | `/api/conversations/{id}/messages?cursor=` | `MessageService.ListAsync` (newest-first keyset) |
+| POST | `/api/conversations/{id}/messages` | `SendAsync` — `{type,text?,mediaUrl?,thumbnailUrl?,mediaWidth?,mediaHeight?,replyToMessageId?}`; persists, bumps conversation + recipient `UnreadCount`, broadcasts + FCM |
+| POST | `/api/conversations/{id}/read` `{lastMessageId}` | `MarkReadAsync` — zeroes unread, emits `MessageRead` |
+| POST | `/api/conversations/{id}/pin` `{pinned}` | `PinAsync` — rejects a 4th pin |
+| POST | `/api/messages/{id}/react` `{emoji}` | `MessageService.ReactAsync` (empty emoji clears) |
+| DELETE | `/api/messages/{id}` | `DeleteAsync` — sender-only soft delete |
+
+Media reuses the existing signed-URL pipeline (`/api/media/*`) — the client
+uploads image/video (compressed, ≤10 MB) and a video thumbnail, then sends the
+message with the resulting URLs. DTOs in `Models/MessagingModels.cs`
+(`ConversationDto`, `MessageDto`, `ReactionDto`, `MessageReplyDto`, …).
+
 ## Pending Modules
 
-- Captures, media upload, feed, search — not yet implemented; document each as it lands.
+- Captures, full media transcoding (HLS) — not yet implemented; document each as it lands.

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>TrueCapture.Modules.Notifications</RootNamespace>
@@ -13,6 +13,8 @@
     <!-- Narrow cross-module reference: admin notification fan-out joins on the UserDevice entity
          owned by the Identity module. Mirror this when extracting Notifications later. -->
     <ProjectReference Include="..\TrueCapture.Modules.Identity\TrueCapture.Modules.Identity.csproj" />
+    <!-- Admin "send notice" emits into the activity feed owned by the Social module. -->
+    <ProjectReference Include="..\TrueCapture.Modules.Social\TrueCapture.Modules.Social.csproj" />
   </ItemGroup>
 
   <ItemGroup>

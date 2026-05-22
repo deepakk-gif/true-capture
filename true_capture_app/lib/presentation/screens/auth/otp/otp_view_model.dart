@@ -9,6 +9,7 @@ import '../../../../services/local_service.dart';
 import '../../../providers/local_storage_provider.dart';
 import '../../../providers/user_data_provider.dart';
 import '../../base/base_view_model.dart';
+import '../../base/screen_state.dart';
 
 class OtpViewModel extends BaseViewModel {
   OtpViewModel(this._authRepository, this._authStateNotifier, this._storage);
@@ -28,6 +29,7 @@ class OtpViewModel extends BaseViewModel {
     required OtpPurpose purpose,
   }) async {
     await executeWithLoading(
+      errorState: ScreenState.content,
       operation: () async {
         switch (purpose) {
           case OtpPurpose.verifyEmail:
@@ -44,10 +46,14 @@ class OtpViewModel extends BaseViewModel {
             await _authStateNotifier.saveToken(
               response.accessToken,
               refreshToken: response.refreshToken,
+              accessExpiresAtUtc: response.accessExpiresAtUtc,
             );
-            if (response.user != null) {
-              await _authStateNotifier.setUser(response.user!);
-            }
+            // The auth response carries no user object — load the full
+            // profile from /api/users/me. Best-effort: verify succeeded.
+            try {
+              final user = await _authRepository.getProfile();
+              await _authStateNotifier.setUser(user);
+            } catch (_) {/* non-fatal */}
             await _storage.delete(StorageKeys.pendingVerifyEmailKey);
             if (!context.mounted) return;
             AppRouter.go(context, ScreenPath.routeMain);
@@ -70,6 +76,7 @@ class OtpViewModel extends BaseViewModel {
     required OtpPurpose purpose,
   }) async {
     await executeWithLoading(
+      errorState: ScreenState.content,
       operation: () => _authRepository.sendOtp(
         OtpSendRequest(email: email, purpose: purpose),
       ),

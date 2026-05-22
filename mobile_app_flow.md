@@ -12,6 +12,7 @@
 - **Routing**: `core/router/app_router.dart` (`AppRouter.go` / `AppRouter.push` + `ScreenPath` constants).
 - **Endpoints**: `core/constants/api_endpoints.dart`.
 - **Auth state**: `presentation/providers/user_data_provider.dart#AuthStateNotifier` — `saveToken(access, refreshToken)` and `setUser(...)`.
+- **Motion**: widget-level animation uses the `flutter_animate` package via the `.animate()` API. Timing/curves come from `core/constants/app_motion.dart#AppMotion` (`fast`/`normal`/`slow`/`stagger` durations; `enter`/`exit`/`standard` curves) — never hard-coded. The `flutter-widget-animation` Claude skill (`.claude/skills/`) governs how/when motion is applied: restrained entrances, no replay-on-rebuild traps. Route transitions stay separate in `core/router/app_router.dart` (`AnimationType`). Reference demo: `intro_screen.dart#_IntroPage` (staggered fade + slide).
 
 ---
 
@@ -74,10 +75,19 @@ All methods now hit the canonical paths via the matching DTOs:
 | Screen | ViewModel | Flow |
 |---|---|---|
 | `auth/sign_up/sign_up_screen.dart` | `sign_up_view_model.dart` | Fields: **Username** (was Full name), Email, Password → `signUp(username, email, password)` → `AuthRepository.signUp` → `POST /api/auth/register` → push `routeOtpVerify` with `{ email, purpose: verifyEmail }`. |
-| `auth/otp/otp_verify_screen.dart` | `otp_view_model.dart` | Takes `email` + `purpose` from route extras. On 6-digit code completion: `verifyEmail` → `repository.verifyOtp` → `AuthStateNotifier.saveToken+setUser` → `go(routeMain)`. `passwordReset` → push `routeResetPassword` with `{ email, code }` (no /verify-otp call — `/reset-password` consumes the OTP itself). |
+| `auth/otp/otp_verify_screen.dart` | `otp_view_model.dart` | Takes `email` + `purpose` from route extras. On 6-digit code completion: `verifyEmail` → `repository.verifyOtp` → `AuthStateNotifier.saveToken+setUser` → `go(routeMain)`. `passwordReset` → push `routeResetPassword` with `{ email, code }` (no /verify-otp call — `/reset-password` consumes the OTP itself). When `AppConfig.isLocal`, passes `initialValue: AppConfig.localTestOtp` (`'123456'`) to `CustomOtpField` — see local-env testing OTP below. |
 | `auth/forgot_password/forgot_password_screen.dart` | `forgot_password_view_model.dart` | Email → `AuthRepository.forgotPassword(ForgotPasswordRequest)` → push `routeOtpVerify` with `{ email, purpose: passwordReset }`. |
 | `auth/reset_password/reset_password_screen.dart` (NEW) | `reset_password_view_model.dart` (NEW) | Takes `email` + `code` from extras. Form: new password + confirm → `AuthRepository.resetPassword(ResetPasswordRequest)` → `go(routeSignIn)`. |
 | `auth/sign_in/sign_in_screen.dart` | `sign_in_viewmodel.dart` | Email + password → `AuthRepository.signIn` → save tokens → main. Social Google button → `AuthMixin.signInWithSocial` (Google flow — see task `#20`). |
+
+### Local-env testing OTP (`config/app_config.dart` + `common_widgets/custom_otp_field.dart`)
+For localhost testing the backend's Development environment issues a fixed OTP instead of a random one, so no real inbox is needed.
+
+- `AppConfig.localTestOtp = '123456'` — must match `OtpService.DevFixedCode` on the backend.
+- `AppConfig.isLocal` — `true` when `environment == Environment.local`.
+- `CustomOtpField` has an optional `initialValue` param that **only pre-fills the cells** (visual hint). `OtpVerifyScreen` passes `AppConfig.isLocal ? AppConfig.localTestOtp : null`.
+- Auto-submission is driven by the **screen**, not the field: `_OtpVerifyScreenState.onModelReady` calls `OtpViewModel.verify(...)` once with `localTestOtp` when `AppConfig.isLocal`. `onModelReady` fires exactly once (post first frame) from the screen's stable state.
+- **Why screen-level, not field-level**: the field previously auto-submitted from its own `initState` post-frame callback. `ScreenStateAware` wraps the form in a `Stack` for `apiProgress` and not for `content`; that structural change recreates `CustomOtpField`'s `State`, so its `initState` re-ran on every `verify()` state transition → an infinite `verify-otp` loop that tripped the `Auth` rate limit (`429`). Driving the one-shot from `onModelReady` (stable screen state) fixes it.
 
 ### Router (`core/router/app_router.dart`)
 - New constant `ScreenPath.routeResetPassword = '/reset-password'`.
@@ -162,7 +172,7 @@ Interceptor order inside `ApiService.initialize()`:
 → `OtpViewModel.resend(email)`
 → `AuthRepository.sendOtp(OtpSendRequest)` → `POST /auth/send-otp`.
 
-**Sign Out** — `TabSettings` "Sign out" tile (`presentation/screens/main/tabs/tab_settings/tab_settings.dart`)
+**Sign Out** — `TabProfile` "Sign out" tile (`presentation/screens/main/tabs/tab_profile/tab_profile.dart`)
 → reads `StorageKeys.refreshTokenKey` + `StorageKeys.fcmTokenKey` from secure storage
 → `AuthRepository.signOut(RefreshTokenRequest(refreshToken, fcmToken))` → `POST /api/auth/logout` (best-effort try/catch)
 → `SocialLoginService.signOut()` (Google sign-out)
@@ -176,6 +186,44 @@ Backend-side, the `fcmToken` on the logout payload triggers `IUserDeviceService.
 - `AuthMixin.signInWithSocial` is a stub; wire it to `AuthRepository.socialLogin` and persist the returned tokens before calling `onSuccess`.
 - `refresh-token` endpoint is declared but the refresh interceptor is not yet implemented in `network/interceptors/`.
 - `reset-password` endpoint exists but no screen/VM consumes it yet — currently OTP verify auto-logs-in instead of routing to a new-password screen.
+
+---
+
+## Splash / bootstrap routing (`presentation/screens/splash/splash_viewmodel.dart`)
+
+`SplashViewmodel.setupBeforeStart` decides the first screen on cold start:
+
+1. No `accessTokenKey` → `routeIntro`.
+2. `pendingVerifyEmailKey` set → the user registered but never finished OTP
+   verification. The OTP screen is only meant to be reached **in-session**
+   (pushed right after `/register`). On a relaunch the half-finished
+   registration is treated as **abandoned**: `AuthStateNotifier.clear()` wipes
+   the unverified token + pending key, and the user is sent to `routeSignIn`.
+   (Previously this re-routed straight to `routeOtpVerify`, trapping the user
+   on the OTP screen on every restart.)
+3. **Fast path** — `AuthStateNotifier.hasValidAccessToken()` true (stored access
+   token + a persisted `accessExpiresAtKey` still in the future, minus a 30s skew) →
+   `loadCachedUser()` restores the cached profile into state → `routeMain`, with **no
+   blocking network call** (works offline). A best-effort `getProfile()` then refreshes
+   the profile in the background; failure keeps the cached copy.
+4. **Slow path** — token present but expiry missing/expired → `getProfile()` (the
+   refresh interceptor rotates an expired access token on a 401) → `setUser` →
+   `routeMain`; on failure → `routeSignIn`.
+
+### Session persistence
+
+The auth session is kept across app restarts via `flutter_secure_storage`
+(`LocalStorageService` — encrypted: Android Keystore / iOS Keychain):
+
+- `AuthStateNotifier.saveToken(access, {refreshToken, accessExpiresAtUtc})` persists the
+  token, refresh token and **expiry** (`accessExpiresAtKey`, ISO-8601 UTC). All login
+  paths (sign-in, sign-up, OTP verify, Google) pass `response.accessExpiresAtUtc`.
+- `RefreshInterceptor._doRefresh` rewrites `accessExpiresAtKey` after a silent token
+  rotation, so the local validity check stays accurate.
+- `setUser(...)` caches the full `UserResponse` as JSON (`userProfileKey`);
+  `loadCachedUser()` restores it on launch without a network call.
+- `hasValidAccessToken()` is the local validity check; `clear()` wipes token, refresh
+  token, expiry, cached profile, user id and pending-verify key.
 
 ---
 
@@ -208,8 +256,205 @@ After `ApiService.instance.initialize()`, `main()` runs `await Firebase.initiali
 - All auth request DTOs (`sign_in_request`, `sign_up_request`, `otp_request#OtpVerifyRequest`, `refresh_token_request`, `social_login_request`) gain optional `fcmToken` + `deviceType` fields, serialized as camelCase (`fcmToken` / `deviceType`) to match the backend's default `JsonSerializerDefaults.Web` policy.
 - View-models for sign-in / sign-up / OTP verify / Google social / logout read the cached values from secure storage and pass them through the repository → backend on every token-issuing call. Backend persists each (`user`, `fcm_token`) row in `identity.UserDevice` and auto-subscribes it to the `"all"` topic.
 
+## Main Shell — 5-tab bottom navigation
+
+`MainScreen` (`presentation/screens/main/main_screen.dart`) is the post-auth shell:
+an `IndexedStack` of 5 tabs driven by `MainViewModel.currentIndex`, with
+`CustomBottomNavigation` (fixed-type `BottomNavigationBar`).
+
+| # | Tab | Widget (`presentation/screens/main/tabs/`) | Status |
+|---|---|---|---|
+| 1 | Home | `tab_home/tab_home.dart` | story tray + Normal-post feed (see Create Post Module) |
+| 2 | Fake vs Real | `tab_fake_vs_real/tab_fake_vs_real.dart` | Fake-vs-Real feed (see Create Post Module) |
+| 3 | Create Post | `tab_create_post/tab_create_post.dart` | post composer (see Create Post Module) |
+| 4 | Message | `tab_message/tab_message.dart` | placeholder |
+| 5 | Profile | `tab_profile/tab_profile.dart` | header + Theme + Sign out |
+
+`TabProfile` absorbed the former `TabSettings` (theme toggle + sign-out tile);
+`tab_settings/` was removed. Note this differs from PRD §6, which lists 4 tabs
+with Messaging as a top-bar icon — Message is a dedicated tab per request.
+
+## Error handling — auth surfaces
+
+`BaseViewModel.executeWithLoading` takes an `errorState` param: auth view models
+pass `ScreenState.content` so a failed submission keeps the form visible.
+`BaseConsumerState` listens to its view model and surfaces new errors via a
+snackbar (skipped for full-page `ScreenState.error`). Social-login failures in
+`AuthMixin.signInWithSocial` are forwarded through `onError` → `setError`.
+
+## Profile Module — DONE (edit profile + avatar upload)
+
+Route: `routeEditProfile` `/edit-profile` (pushed from the Profile tab). Backed by `UsersController` (`/api/users/me`) on the backend.
+
+### Endpoint constants (`core/constants/api_endpoints.dart`)
+Already declared: `userProfile` / `updateProfile` = `/api/users/me`, `uploadAvatar` = `/api/users/me/avatar`.
+
+### DTOs
+- Request: `network/dto/request/user/update_profile_request.dart` — `UpdateProfileRequest(displayName?, bio?, gender?, accountType?)` → backend `UpdateProfileRequest`. `gender` is `"male"/"female"/"other"/null`; `accountType` is `"public"/"private"`.
+- Response: `network/dto/response/auth/user_response.dart#UserResponse` — the full current-user model. Fields: `id, email, username, name (displayName), avatarUrl, bio, joinedAt, followersCount, followingCount, postsCount, emailVerified, isBlueTick, isSuspended, accountType, gender` (camelCase keys + snake-case fallback; `isBlueTick` falls back to `isVerified`). Returned by `GET/PUT /api/users/me` and the avatar endpoints.
+
+### Repository (`repositories/user_repository.dart` — NEW)
+`UserRepository(ApiService)`, exposed via `repo_provider.dart#userRepo`:
+
+| Method | Endpoint | Returns |
+|---|---|---|
+| `getMyProfile()` | `GET /api/users/me` | `UserResponse` |
+| `updateProfile(UpdateProfileRequest)` | `PUT /api/users/me` | `UserResponse` |
+| `uploadAvatar(File)` | `POST /api/users/me/avatar` (multipart, field `file`) | `UserResponse` |
+| `removeAvatar()` | `DELETE /api/users/me/avatar` | `UserResponse` |
+
+`uploadAvatar` builds a Dio `FormData` with a `MultipartFile` whose `contentType` is derived from the file extension (JPEG/PNG/WebP — backend `AvatarRules` rejects others). `ApiService.postMultipart(path, FormData)` (NEW) sends it — Dio sets the `multipart/form-data` content-type automatically.
+
+### Multipart / media URLs
+- `ApiService.postMultipart` — multipart POST helper.
+- `AppConfig.resolveUrl(path)` (NEW) — resolves a relative backend media path (`/media/avatars/x.jpg`) to an absolute URL against `baseUrl`; absolute URLs (S3/CDN) pass through unchanged.
+
+### Widgets
+- `presentation/common_widgets/user_avatar.dart#UserAvatar(avatarUrl, name, radius)` (NEW) — circular avatar; shows the network image (via `AppConfig.resolveUrl`), falling back to initials, then a person icon.
+
+### Screen + ViewModel
+`presentation/screens/profile/edit_profile/` — `EditProfileScreen` + `EditProfileViewModel` (provider `editProfileViewModelProvider`, built with `userRepo` + `AuthStateNotifier`).
+
+Flow:
+- **Load** — `onModelReady` → `EditProfileViewModel.load()` → `UserRepository.getMyProfile()` → `AuthStateNotifier.setUser`; the screen then seeds display name, bio, the gender dropdown, and the private-account switch from the refreshed auth-state user.
+- **Save** — `save(displayName, bio, gender, accountType)` → `UserRepository.updateProfile` → `setUser` → `AppRouter.pop`. Validation: name ≤ 80, bio ≤ 500. Gender dropdown (`Not specified` / Male / Female / Other) + a "Private account" `SwitchListTile` map to `gender` / `accountType`.
+- **Avatar** — the avatar's camera button opens a bottom sheet (gallery / camera / remove). Gallery/camera use `ImagePickerUtils`; the picked `File` → `EditProfileViewModel.uploadAvatar` → `UserRepository.uploadAvatar` → `setUser`. Remove → `removeAvatar` → `DELETE` → `setUser`.
+
+Every mutation refreshes the `AuthStateNotifier` user, so `UserAvatar` instances across the app (e.g. the Profile tab) update reactively.
+
+### Profile tab (`screens/main/tabs/tab_profile/tab_profile.dart`)
+Instagram-style header: a `Row` of `UserAvatar` + a `_StatColumn` trio (posts / followers / following counts), then display name with a blue-tick `Icon` when `isBlueTick`, `@username`, email, and bio. "Edit profile" tile pushes `routeEditProfile`.
+
+### Post-login profile fetch
+The backend auth responses carry no `user` object, so after `saveToken(...)` the sign-in (`sign_in_viewmodel.dart`), Google (`auth_mixin.dart`), and OTP-verify (`otp_view_model.dart`) flows now call `AuthRepository.getProfile()` (`GET /api/users/me`) → `AuthStateNotifier.setUser`. The fetch is best-effort (wrapped in try/catch) — login still completes if it fails, and the splash screen re-fetches on the next app entry.
+
+## Social Feature — DONE (search, profiles, follow, posts, notices)
+
+User search, follow graph, viewable profiles, basic posts, and the in-app notice inbox.
+
+### Routes (`app_router.dart`)
+`routeUserSearch` `/user-search`, `routeUserProfile` `/user-profile` (extra `userId`), `routeFollowList` `/follow-list` (extra `userId` + `type`), `routeFollowRequests` `/follow-requests`, `routeNotices` `/notices`. Create-post is hosted in the existing `tab_create_post` tab.
+
+### Entry points
+- Home tab (`tab_home.dart`) — a search `IconButton` in the `CustomAppBar` → `routeUserSearch`.
+- Profile tab (`tab_profile.dart`) — new "Follow requests" + "Notices" `ListTile`s.
+- `tab_create_post.dart` now renders `CreatePostScreen`.
+
+### Data layer
+- DTOs: `network/dto/social_models.dart` — `UserSearchItem`, `UserProfileView`, `FollowActionResult`, `FollowUserItem`/`FollowListResult`, `PostItem`/`PostListResult`, `NoticeItem`/`NoticeListResult`, `FollowState` constants.
+- Repositories (`repo_provider.dart`): `SocialRepository` (search, profile, follow/unfollow, followers/following, requests + accept/reject, user posts), `PostRepository` (create multipart, delete), `NoticeRepository` (list, unread-count, mark-read).
+- `RecentSearchService` (`services/recent_search_service.dart`) — **local-only** recent-search history (JSON list of tapped users under `StorageKeys.recentSearchesKey`); add / remove-one / clear-all. No API.
+- Endpoint constants + path builders in `api_endpoints.dart`.
+
+### Screens (`presentation/screens/social/`)
+| Screen | Flow |
+|---|---|
+| `search/user_search_screen.dart` | Debounced query → `SocialRepository.search`; results show `UserListRow` with mutual-follower subtitle ("Followed by a, b +N"). A **Recent** section (per-item remove + Clear all) shows when the query is empty. Tap → remembers the user locally → `routeUserProfile`. |
+| `profile/user_profile_screen.dart` | `SocialRepository.profile` → header (avatar, counts, name + blue tick, bio) + Follow / Message buttons. Counts tap → `routeFollowList`. Public → posts grid (`GET /api/users/{id}/posts`); private + not following → a lock placeholder. `Follow` toggles follow / requested / unfollow; `Message` → "Messaging coming soon" snackbar. |
+| `follow/follow_list_screen.dart` | Followers / following list of `UserListRow`s → tap → profile. |
+| `follow/follow_requests_screen.dart` | Incoming pending requests. Each row: **Accept** + **Cancel** while pending; on **Accept** the row stays and swaps to a **Follow back** action (`FollowRequestsViewModel` wraps each request in a mutable `FollowRequestRow` tracking `accepted` + `followState`). Follow-back toggles via `SocialRepository.follow/unfollow`; the button reflects `none → Follow back`, `following → Following`, `requested → Requested`. **Cancel** rejects + removes the row. No backend change — `GET /api/follow/requests` already returns each requester's `followState`. |
+| `notices/notices_screen.dart` | In-app admin notices; tapping opens the body + marks it read. |
+| `post/create_post_screen.dart` | Image picker (`ImagePickerUtils`) + caption → `PostRepository.create` (multipart). |
+
+View-models extend `BaseViewModel`; providers in `vm_provider.dart`. Shared widget `common_widgets/user_list_row.dart#UserListRow` (avatar + name + blue tick + optional trailing) is reused across search, follow lists, and requests.
+
+### Push handling (`firebase_service.dart`)
+`onMessageOpenedApp` taps route by the FCM data `type`: `follow_request` → follow-requests screen; `follow_accepted` / `new_follower` → that user's profile; `admin_notification` → notices. Terminated-state taps are logged only (avoids racing the splash redirect).
+
+## Create Post Module — DONE (feed tabs, post card, composer, engagement)
+
+Two post types — **Normal** (Home tab) and **Fake vs Real** (Fake vs Real tab) — on a
+signed-URL media pipeline. MVVM: Screen → `BaseConsumerState` → ViewModel → Repository →
+`ApiService`.
+
+### Endpoints (`core/constants/api_endpoints.dart`)
+`mediaUploads`, `mediaBlob(id)`, `mediaFinalize`, `feed`, `posts`, `postById/Like/Save/
+Share/Vote/Report`, `postComments`, `commentReplies/Like`, `commentById`, `mySaves`.
+
+### DTOs (`network/dto/post_models.dart` — NEW)
+`PostDto` (+ `PostAuthorDto`, `PostMediaDto`), `FeedResult`, `UploadTicket`,
+`MediaAssetDto`, `CommentDto`/`CommentListResult`, `LikeResult`, `VoteResult`.
+`social_models.dart#PostItem` updated to `coverUrl`/`type`/`kind` (grid thumbnails).
+
+### Repositories (`repo_provider.dart`)
+- `MediaRepository` (NEW) — `uploadFile`/`uploadAll`: `POST /api/media/uploads` → raw-bytes
+  `PUT /api/media/blob/{id}` (`ApiService.putBytes`) → `POST /api/media/finalize`.
+- `FeedRepository` (NEW) — `getFeed(channel, cursor)` for `FeedChannel.home` / `.fakeVsReal`.
+- `PostRepository` (rewritten) — create, detail, delete, like/save/share/vote/report
+  toggles, comments + replies + comment-like, `saved`.
+
+### View-models (`vm_provider.dart`)
+- `FeedViewModel` (`feedViewModelProvider` family by channel) — list, refresh, cursor
+  paging, optimistic like/save/vote/share/report.
+- `CreatePostViewModel` — media list + type + submit (upload then create).
+- `PostDetailViewModel`, `CommentsViewModel` (top-level + 1 reply level + comment likes).
+
+### Screens / widgets
+| File | Role |
+|---|---|
+| `common_widgets/post_card.dart` (NEW) | Reusable card: avatar+username (→profile), Follow button, blue tick, media carousel / video placeholder, like/comment/share/save row, Fake-vs-Real vote bar, caption show-more, view count + relative time, `⋮` → About account / Report sheet |
+| `main/tabs/feed_view.dart` (NEW) | Shared feed list — pull-to-refresh + infinite scroll; used by both tabs |
+| `main/tabs/tab_home/tab_home.dart` | Story tray + `FeedView(home)` |
+| `main/tabs/tab_fake_vs_real/tab_fake_vs_real.dart` | `FeedView(fakeVsReal)` |
+| `social/post/create_post_screen.dart` | Composer — type toggle (Fake-vs-Real shown when `isBlueTick`), multi-photo / video picker, caption, reference links |
+| `social/post/post_detail_screen.dart` | `PostCard` + comments entry + reference list |
+| `social/post/comments_screen.dart` | Comments with 1-level replies, per-comment like, reply composer |
+| `social/post/report_sheet.dart` (NEW) | Report bottom sheet — preset reasons + "Other" text |
+
+Video playback with a mute control is a documented follow-up — videos currently render a
+thumbnail with a play badge and open the detail screen on tap. The `domain/post/{shareId}`
+deep link is handled by the messaging module.
+
+## Messaging Module — DONE (1-to-1 chat, SignalR realtime, notifications)
+
+1-to-1 chat backed by the `Modules.Messaging` API. MVVM: Screen → `BaseConsumerState`
+→ ViewModel → `MessageRepository` → `ApiService`; realtime is additive via SignalR.
+
+### Dependencies (`pubspec.yaml`)
+`signalr_netcore` (SignalR client), `flutter_local_notifications`,
+`flutter_image_compress`, `video_compress` (video compression + thumbnail).
+
+### Network / services
+- DTOs `network/dto/message_models.dart` — `ConversationDto`, `MessageDto`
+  (+ `MessageReplyDto`, `ReactionDto`, `ChatUserDto`), list results.
+- `MessageRepository` — REST: conversations, messages (newest-first pages), send,
+  read, pin, react, delete. Endpoints under `ApiEndpoints` (`conversations`,
+  `conversationMessages/Read/Pin`, `messageReact/ById`, `chatHub`).
+- `MediaRepository.uploadBytes` (NEW) — uploads in-memory compressed image bytes.
+- `ChatSocketService` (`services/chat_socket_service.dart`) — wraps the SignalR
+  `HubConnection` to `{baseUrl}/hubs/chat?access_token=…`; exposes `onMessage` /
+  `onRead` / `onReaction` broadcast streams; holds `activeConversationId`.
+- `LocalNotificationService` — `flutter_local_notifications`; shows message
+  notifications, routes a tap (payload = conversationId) to the chat.
+
+### View-models (`vm_provider.dart`)
+- `ConversationListViewModel` — loads conversations, keeps them live off
+  `ChatSocketService.onMessage` / `onRead`, pin toggle (max 3), unread tracking;
+  `sorted` puts pinned first then by recency.
+- `ChatViewModel` — resolves the conversation (`open` accepts a `ConversationDto`,
+  a `userId`, or a `conversationId`), loads newest-first history with scroll-up
+  pagination, sends text / image (compress 70%) / video (compressed + thumbnail,
+  ≤10 MB), reactions (one per user, replaceable), replies; live via the socket.
+
+### Screens (`presentation/screens/messaging/`)
+| File | Role |
+|---|---|
+| `tab_message/tab_message.dart` | Conversation list — `UserAvatar`, name, last-message preview (**bold when unread**), unread badge, pin icon, relative time; long-press → pin/unpin; compose FAB → user search |
+| `chat_screen.dart` | Reverse `ListView` (newest at bottom) + scroll-up paging; header; reply bar; composer (text + attach photo/video); marks read |
+| `message_bubble.dart` | Text / image / video (thumbnail + play badge) bubble; reply quote; reaction chips; relative time; **double-tap → ❤️**, long-press → emoji bar + Reply |
+| `chat_time.dart` | `chatTimeShort` / `chatTimeRelative` formatters |
+
+### Realtime + notification wiring
+- `MainScreen.onModelReady` → `_bootstrapChat`: init `LocalNotificationService`,
+  connect `ChatSocketService`, and a global `onMessage` listener that shows a
+  local notification when the message isn't the user's own and isn't the open
+  chat (`activeConversationId`).
+- `firebase_service.dart` — `routeNotificationData` routes a `type:'message'` FCM
+  to `routeChat`; terminated-launch payloads are stashed in
+  `FirebaseService.pendingLaunchData` and consumed by `_bootstrapChat`.
+- Route `routeChat` (`/chat`) in `app_router.dart`; the profile "Message" button
+  opens the chat by `userId`.
+
 ## Pending Modules
 
 - `splash` / `intro` — bootstrap and onboarding (screens exist; flow not yet documented here).
-- `main` — post-auth shell (screens exist; flow not yet documented here).
-- Profile, avatar upload — endpoints declared, no flow yet.

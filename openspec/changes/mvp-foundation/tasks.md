@@ -2,11 +2,11 @@
 
 - [ ] 1.1 Provision PostgreSQL, Redis, and object storage (R2 bucket + Cloudflare CDN) for dev and staging; commit connection strings to `appsettings.Development.json` and document in `true_capture_backend/README.md`
 - [ ] 1.2 Add `StackExchange.Redis` and Hangfire packages to `TrueCapture.Api`; wire Redis multiplexer and Hangfire in-process server in `Program.cs`
-- [ ] 1.3 Add a Roslyn analyzer or ArchUnit-style test that fails when one `TrueCapture.Modules.*` project references another module's entity types directly (enforces module boundaries — D1)
+- [~] 1.3 Add a Roslyn analyzer or ArchUnit-style test that fails when one `TrueCapture.Modules.*` project references another module's entity types directly (enforces module boundaries — D1)  *(partial: `TrueCapture.Tests.Arch/ArchitectureTests.cs` has the NetArchTest boundary + BaseController + enum-status rules, but `ModuleAssemblies` only lists `Modules.Identity` — extend it to Users/Social/Notifications)*
 - [ ] 1.4 Add Cloudflare Turnstile keys + captcha validator implementation behind the existing `[RequireCaptcha]` attribute (resolves OQ5; confirm with devops before merging)
 - [x] 1.5 Configure SMTP provider (transactional email) for OTP delivery; add `EmailOptions` + `IEmailSender` interface and a SES/Mailgun-backed implementation
 - [x] 1.6 Bootstrap Next.js 15 admin app under `true_capture_admin_panel/` (App Router, TypeScript, server components default); commit a stub layout and a `/login` page
-- [ ] 1.6b Leave `true_capture_web/` as a `.gitkeep`-only folder — the public SEO site is **not** built under this change; it will be addressed in a future OpenSpec change
+- [x] 1.6b Leave `true_capture_web/` as a `.gitkeep`-only folder — the public SEO site is **not** built under this change; it will be addressed in a future OpenSpec change
 
 ## 2. Auth — Backend Extensions
 
@@ -15,7 +15,7 @@
 - [x] 2.3 Add `POST /api/auth/send-otp` and `POST /api/auth/verify-otp` to `AuthController`; captcha + rate-limit gated; update `backend_api_flow.md`
 - [x] 2.4 Add `POST /api/auth/forgot-password` (sends OTP) and `POST /api/auth/reset-password` (consumes OTP, updates `PasswordHash`, revokes all active `RefreshToken`s for the user)
 - [x] 2.5 Add `POST /api/auth/google` accepting a Google ID token; validate signature + audience via `Google.Apis.Auth`; create-or-match user by `GoogleSubject`; return `AuthTokensDto`
-- [x] 2.6 Write integration tests covering every scenario in `specs/user-auth/spec.md`
+- [~] 2.6 Write integration tests covering every scenario in `specs/user-auth/spec.md`  *(reconciled 2026-05-21: unit tests exist — `AuthServiceTests`, `AuthServiceExtensionsTests`, `OtpServiceTests` — but they were committed not compiling, now fixed; no end-to-end integration tests for the auth spec yet)*
 
 ## 3. Auth — Mobile Reconciliation
 
@@ -28,22 +28,22 @@
 
 ## 4. User Profile
 
-- [ ] 4.1 Create `TrueCapture.Modules.Users` module project; add `AddUsersModule` DI extension; register in `Program.cs`
-- [ ] 4.2 Add `Follow` entity (`FollowerId`, `FollowedId`, `CreatedAtUtc`) with unique index on the pair + CHECK that `FollowerId != FollowedId`; migration
-- [ ] 4.3 Implement `UsersController` + `UsersService` with: `GET /api/users/me`, `GET /api/users/{username}`, `PATCH /api/users/me`, `POST/DELETE /api/users/{username}/follow`, `GET /api/users/{username}/{followers|following}`
-- [ ] 4.4 Add denormalized counters `FollowersCount`, `FollowingCount`, `PostsCount` on `User`; update them transactionally on follow/unfollow/post-create/post-delete
-- [ ] 4.5 Wire profile-edit avatar upload through the media-capture-upload signed-URL flow (referenced by `media_asset_id` on `User.AvatarMediaAssetId`)
-- [ ] 4.6 Flutter: build the Main shell scaffold (`main_screen.dart`) with bottom tabs and persistent top app bar; left avatar opens own profile, right chat icon routes to "Coming soon" placeholder
-- [ ] 4.7 Flutter: implement Profile tab (header, posts grid via `GET /api/users/{username}/posts`, settings entry points)
-- [ ] 4.8 Flutter: implement public-profile screen reused for `@mention` and avatar taps; show `you_follow` and a follow/unfollow button
-- [ ] 4.9 Integration tests for every scenario in `specs/user-profile/spec.md`
+- [x] 4.1 Create `TrueCapture.Modules.Users` module project; add `AddUsersModule` DI extension; register in `Program.cs`
+- [x] 4.2 Add `Follow` entity — shipped as `(FollowerId, FolloweeId, Status)` with a `FollowStatus` enum (`Accepted`/`Pending`) for the public/private follow-request flow; unique index on the `(FollowerId, FolloweeId)` pair; migration `20260521112647_AddSocialAndNotices` *(self-follow blocked in `SocialService`, not a DB CHECK)*
+- [x] 4.3 Profile + follow endpoints implemented across `UsersController` (self: `GET /api/users/me`, `PUT /api/users/me`, avatar) and `SocialController` (`GET /api/users/{id}`, `POST/DELETE /api/users/{id}/follow`, `GET /api/users/{id}/{followers|following}`) — **id-based routing, `PUT` not `PATCH`** (spec amended 2026-05-21)
+- [x] 4.4 Add denormalized counters `FollowersCount`, `FollowingCount`, `PostsCount` on `User`; updated transactionally via `ExecuteUpdate` on follow-accept/unfollow/post-create/post-delete; migration `20260521142221_AddUserCounters` backfills existing rows
+- [x] 4.5 Avatar upload — shipped as direct multipart upload (`POST/DELETE /api/users/me/avatar` → `IFileStorage`); the media-capture-upload signed-URL flow is **not** built under this change so avatars do not use it (spec/task amended 2026-05-21)
+- [x] 4.6 Flutter: build the Main shell scaffold (`main_screen.dart`) with bottom tabs and persistent top app bar; left avatar opens own profile, right chat icon routes to "Coming soon" placeholder
+- [x] 4.7 Flutter: implement Profile tab (`tab_profile.dart` — header, posts grid, settings entry points)
+- [x] 4.8 Flutter: public-profile screen (`social/profile/user_profile_screen.dart`) reused for `@mention`/avatar taps — shows `followState` and a follow/unfollow button; followers/following lists via `social/follow/follow_list_screen.dart`
+- [~] 4.9 Integration tests for every scenario in `specs/user-profile/spec.md` — written (`TrueCapture.Tests.Integration/UserProfileTests.cs`, compiles); **unverified — `WebAppFixture` needs Docker (Testcontainers PostgreSQL), unavailable in this environment**
 
 ## 5. Media Capture & Upload
 
-- [ ] 5.1 Create `TrueCapture.Modules.Media` module; add `MediaAsset` entity (`Id`, `OwnerId`, `Kind: photo|video`, `Status: pending|ready|failed`, `MimeType`, `StorageKey`, `MasterUrl?`, `ThumbnailUrl?`, `HlsPlaylistUrl?`, `DurationMs?`, `CaptureMetadata JSONB`, `ErrorCode?`, `CreatedAtUtc`) + migration
-- [ ] 5.2 Implement `POST /api/media/uploads` returning a pre-signed PUT URL (R2/S3), enforce MIME allow-list, enforce size caps (25 MB photo / 200 MB video), short expiry (≤ 15 min)
-- [ ] 5.3 Implement `POST /api/media/finalize` creating the `MediaAsset` row in `status=pending` with the supplied `capture_metadata` (JSONB validated for required keys: `captured_at`, `device.*`, `in_app_capture`)
-- [ ] 5.4 Add Hangfire job `MediaProcessor.ProcessAsync(mediaAssetId)` that runs FFmpeg for video (HLS 240p/480p/720p, 60s max) and a compression pipeline for photos (WebP master + thumbnail), uploads outputs, updates the row to `ready` or `failed`
+- [x] 5.1 `MediaAsset` entity added in `Modules.Social` (`OwnerId`, `Kind`, `Status`, `StorageKey`, `Url`, `ThumbnailUrl?`, `MimeType`, `ByteSize`, `DurationSeconds?`, `Width?`/`Height?`, `CaptureMetadata` jsonb, `ErrorCode?`) + migration `20260522060437_AddCreatePostModule` *(consolidated into `Modules.Social`, not a separate `Modules.Media`)*
+- [x] 5.2 `POST /api/media/uploads` (`MediaController` → `MediaService.RequestUploadAsync`) — MIME allow-list (jpeg/png/webp, mp4/quicktime; GIF/audio rejected), 25 MB/200 MB caps → `413`, 15-min ticket. *(Local dev uses an authorized `PUT /api/media/blob/{id}` endpoint via `IFileStorage.ReserveSlot`/`WriteAsync`; true S3/R2 presigning swaps in behind the same interface.)*
+- [x] 5.3 `POST /api/media/finalize` (`MediaService.FinalizeAsync`) verifies bytes and flips the asset to `ready`, storing `capture_metadata` verbatim
+- [ ] 5.4 Background FFmpeg/HLS transcoding worker — **deferred**; MVP serves photo bytes as their own thumbnail and stores video as-is (state machine `pending|ready|failed` is in place for the worker to be added later)
 - [ ] 5.5 Enforce video duration cap server-side (probe with `ffprobe` before transcoding); set `status=failed` with `error_code=duration_exceeded`
 - [ ] 5.6 Flutter: add `camera` plugin integration; build the Create tab camera surface (photo/video modes, front/back, flash, zoom); **no gallery picker**
 - [ ] 5.7 Flutter: assemble `capture_metadata` payload on every capture (timestamp, device fingerprint from `device_info_plus`, install UUID, optional GPS from `geolocator`, `in_app_capture=true`)
@@ -52,22 +52,24 @@
 
 ## 6. Posts
 
-- [ ] 6.1 Create `TrueCapture.Modules.Posts` module; add `Post` (`Id`, `AuthorId`, `Caption`, `Kind: photo|carousel|video`, `IsAdminPost`, `IsFakeVsReal`, `Verdict?`, `Hidden`, `LikesCount`, `CommentsCount`, `SharesCount`, `CreatedAtUtc`), `PostMedia` (`PostId`, `MediaAssetId`, `Position`), `PostHashtag` (`PostId`, `Tag`), `PostMention` (`PostId`, `MentionedUserId`) + migrations
-- [ ] 6.2 Add CHECK constraint enforcing `is_fake_vs_real => is_admin_post`; add `Verdict` nullable enum column (`real|fake|misleading`) usable only when `is_fake_vs_real=true`
-- [ ] 6.3 Implement `POST /api/posts` (regular users) and `POST /api/admin/posts` (admin only — sets admin flags + verdict); reject mixed media; verify all referenced `MediaAsset.Status='ready' AND OwnerId == author`
-- [ ] 6.4 Implement caption parsing service: regex extracts hashtags and mentions, lowercases, resolves mentions to user ids, writes `PostHashtag` and `PostMention` rows; skips mentions where target user has `privacy_prefs.allow_mentions=false`
-- [ ] 6.5 Implement `GET /api/posts/{id}`, `GET /api/users/{username}/posts`, `DELETE /api/posts/{id}` (author or admin)
-- [ ] 6.6 Flutter: build the post-card widget rendering all primitives in `specs/posts/spec.md` (avatar, media, carousel indicator, video auto-play, action row, save, caption with clickable tokens, relative time)
+> **Module-consolidation note (2026-05-21):** Posts, Engagement, and Feed (sections 6/7/8) ship inside one `TrueCapture.Modules.Social` project, not three separate `Modules.Posts` / `Modules.Engagement` / `Modules.Feed` projects — see the D1 MVP amendment in `design.md`. Read "create the X module" tasks below as "add the X namespace/entities/services inside `Modules.Social`".
+
+- [x] 6.1 `Post` rewritten in `Modules.Social` (`Type {Normal,FakeVsReal}`, `Kind`, `IsAdminPost`, `Status {Live,PendingReview,Removed}`, `RemovalReason?`, `ShareId`, counters `View/Likes/Comments/Shares/True/FalseVotes`); added `PostMedia`, `PostReference`, `PostMention` + 6 more edge tables. *(`Type` enum replaces `IsFakeVsReal`; `#hashtags` deferred — see 6.4.)*
+- [x] 6.2 `is_fake_vs_real ⇒ is_admin_post` invariant enforced in `PostService` (Fake-vs-Real needs `CanPostFakeVsReal`; admin path sets `IsAdminPost`). *(`Verdict` enum dropped — voting replaces a fixed verdict.)*
+- [x] 6.3 `POST /api/posts` + `POST /api/admin/posts` (`PostService.Create/AdminCreateAsync`) — verifies media `ready` + owned, derives `Kind`, rejects mixed media, requires caption + ≥1 reference for Fake-vs-Real
+- [x] 6.4 Caption mention parsing in `PostService.ResolveAndNotifyMentionsAsync` — resolves `@username`, persists `PostMention` + notifies only where the target is public OR followed by the author. *(`#hashtag` indexing deferred to search.)*
+- [x] 6.5 `GET /api/posts/{id}` (`EngagementService.GetPostAsync`), `GET /api/admin/users/{id}/posts`, `DELETE /api/posts/{id}` (author or admin) — id-based routing
+- [~] 6.6 Flutter: build the post-card widget rendering all primitives in `specs/posts/spec.md` (avatar, media, carousel indicator, video auto-play, action row, save, caption with clickable tokens, relative time)  *(partial: `post_detail_screen.dart` exists; no reusable feed post-card, no carousel/video/clickable-token rendering)*
 - [ ] 6.7 Flutter: implement the relative-time formatter exactly per spec (`Just now` / `Nm` / `Nh` / `Nd` / `Nw` / `Ny`); cover with unit tests
-- [ ] 6.8 Flutter: implement Create-tab composer screen (caption input with live `#`/`@` token highlight; submits to `POST /api/posts` after upload finalizes)
+- [~] 6.8 Flutter: implement Create-tab composer screen (caption input with live `#`/`@` token highlight; submits to `POST /api/posts` after upload finalizes)  *(partial: `social/post/create_post_screen.dart` does image + caption upload; no live `#`/`@` token highlight)*
 - [ ] 6.9 Flutter: hashtag results screen (route `/h/{tag}`) — placeholder using `GET /api/posts?hashtag=...` if exposed, or "Coming soon" stub if search is deferred to Phase 3
 - [ ] 6.10 Integration tests for every scenario in `specs/posts/spec.md`
 
 ## 7. Feed
 
-- [ ] 7.1 Create `TrueCapture.Modules.Feed` module; implement `IFeedService.GetAsync(userId, cursor, limit, channel?)` returning ranked posts via SQL: `WHERE is_admin_post = true OR author_id IN (SELECT followed_id FROM follows WHERE follower_id = @me)` AND `hidden = false` AND post has no `pending` media
-- [ ] 7.2 Implement ranking: `score = log(1 + likes_count + 2*comments_count + 3*shares_count) - hours_since_post * 0.05`; ORDER BY score DESC, post id DESC; cursor encodes `(score, post_id)`
-- [ ] 7.3 Implement `GET /api/feed?cursor=&limit=&channel=` controller; `channel=fake_vs_real` adds `AND is_fake_vs_real = true` and orders by `created_at DESC`
+- [x] 7.1 `IFeedService` / `FeedService` in `Modules.Social` — Home channel: Normal + Live + (admin OR self OR followed OR public author); Fake-vs-Real channel: all Live Fake-vs-Real posts
+- [ ] 7.2 Engagement-decay ranking — **deferred**; MVP orders newest-first (keyset on descending id)
+- [x] 7.3 `GET /api/feed?channel=&cursor=` controller (`FeedController`); `channel=fake_vs_real` filters to Fake-vs-Real posts
 - [ ] 7.4 Implement Redis cache layer: key `feed:{user_id}:{channel}` stores first N pages; TTL 5 min; invalidate on follow/unfollow (own key) and on new admin post (broadcast `feed:*` delete-by-pattern); maintain `followers:{author_id}` set for invalidation on new author posts
 - [ ] 7.5 Verify cold-start behavior: a user with 0 follows receives admin-only posts (covered by query naturally; add integration test)
 - [ ] 7.6 Flutter: implement Feed tab and Fake-vs-Real tab as `BaseConsumerState` screens hitting the same `FeedRepository.getFeed(channel)` method with pull-to-refresh and cursor-based infinite scroll
@@ -76,14 +78,14 @@
 
 ## 8. Engagement
 
-- [ ] 8.1 Create `TrueCapture.Modules.Engagement` module; add `Like` (`UserId`, `PostId`, unique), `Comment` (`Id`, `PostId`, `AuthorId`, `Body`, `ParentCommentId?`, `DeletedAtUtc?`, `CreatedAtUtc`), `Save` (`UserId`, `PostId`, unique), `Share` (`UserId`, `PostId`, `CreatedAtUtc`) entities + migrations
-- [ ] 8.2 Implement `POST /api/posts/{id}/like` (toggle), `POST /api/posts/{id}/save` (toggle), `POST /api/posts/{id}/share` (returns canonical URL), `POST /api/posts/{id}/comments`, `GET /api/posts/{id}/comments`, `GET /api/comments/{id}/replies`, `DELETE /api/comments/{id}`
-- [ ] 8.3 Enforce one-level reply rule: reject `parent_comment_id` whose own `ParentCommentId IS NOT NULL`
-- [ ] 8.4 Update post counters atomically on each engagement write (inside the same transaction as the row insert/delete)
-- [ ] 8.5 Implement `POST /api/admin/maintenance/reconcile-counters` recomputing `likes_count`, `comments_count`, `shares_count` from row counts (admin-only)
-- [ ] 8.6 Implement `GET /api/users/me/saves` cursor-paginated
+- [x] 8.1 Engagement entities in `Modules.Social`: `PostLike`, `Comment` (now with `ParentCommentId?` + `IsRemoved`), `PostSave`, `PostShare`, plus `PostVote`, `PostView`, `CommentLike` + migration
+- [x] 8.2 `POST /api/posts/{id}/like|save|share` (toggles + canonical URL), `POST /api/posts/{id}/vote`, `POST/GET /api/posts/{id}/comments`, `GET /api/comments/{id}/replies`, `POST /api/comments/{id}/like`, `DELETE /api/comments/{id}`
+- [x] 8.3 One-level reply rule enforced in `EngagementService.AddCommentAsync` — a `parentCommentId` whose own `ParentCommentId` is set is rejected
+- [x] 8.4 Post counters (`LikesCount`/`CommentsCount`/`SharesCount`/`True`/`FalseVotesCount`) are denormalized columns updated in the same transaction as each engagement write
+- [ ] 8.5 `POST /api/admin/maintenance/reconcile-counters` — deferred
+- [x] 8.6 `GET /api/users/me/saves` cursor-paginated (`EngagementService.GetSavedAsync`)
 - [ ] 8.7 Flutter: wire post-card action row (like toggle, comment sheet, share intent, save toggle); optimistic UI with rollback on failure
-- [ ] 8.8 Flutter: comment screen — list top-level comments with reply chevrons; fetch replies on tap; compose form supports `parent_comment_id`
+- [~] 8.8 Flutter: comment screen — list top-level comments with reply chevrons; fetch replies on tap; compose form supports `parent_comment_id`  *(partial: `social/post/comments_screen.dart` lists + composes top-level comments; no reply thread)*
 - [ ] 8.9 Integration tests for every scenario in `specs/engagement/spec.md`
 
 ## 9. CMS & Contact
@@ -101,10 +103,10 @@
 - [ ] 10.1 Add `UserSettings` (`UserId` PK, `Theme: light|dark|system`, `NotificationPrefs JSONB`, `PrivacyPrefs JSONB`, `UpdatedAtUtc`) + migration; seed default row on user creation
 - [ ] 10.2 Implement `GET /api/users/me/settings` and `PATCH /api/users/me/settings`
 - [ ] 10.3 Enforce `privacy_prefs.allow_mentions=false` in the post-create mention parser (skip rows; preserve caption text)
-- [ ] 10.4 Flutter: theme provider reads `SharedPreferences` synchronously before `runApp` to avoid theme flash; updates persist locally and PATCH the server (best-effort, no UI block on failure)
+- [~] 10.4 Flutter: theme provider reads `SharedPreferences` synchronously before `runApp` to avoid theme flash; updates persist locally and PATCH the server (best-effort, no UI block on failure)  *(partial: local theme provider + `SharedPreferences` persistence exist; no server PATCH — `/api/users/me/settings` not built)*
 - [ ] 10.5 Flutter: on first sign-in on a fresh device, fetch `/api/users/me/settings` and apply server theme value
 - [ ] 10.6 Flutter: build Settings screens — Account (email, password, linked Google), Theme picker, Notification preferences (toggles, no delivery yet), Privacy
-- [ ] 10.7 Flutter: Logout entry — calls `/api/auth/logout`, clears tokens + cached user (preserves theme), routes to `routeSignIn`
+- [x] 10.7 Flutter: Logout entry — calls `/api/auth/logout`, clears tokens + cached user (preserves theme), routes to `routeSignIn`  *(implemented in `tab_profile.dart`)*
 - [ ] 10.8 Integration tests for every scenario in `specs/app-settings/spec.md`
 
 ## 11. Admin Panel (Next.js 15 — `true_capture_admin_panel/`)
@@ -172,8 +174,8 @@
 
 ## 12. Cross-Cutting Hardening
 
-- [ ] 12.1 Add Serilog structured logging for: auth events, post-create, media-finalize, feed reads (cached vs uncached), admin actions
-- [ ] 12.2 Confirm rate-limit policies on every anonymous endpoint (`/auth/*`, `/contact`); add per-user rate limit on `/api/media/uploads` (max 20/hour)
+- [~] 12.1 Add Serilog structured logging for: auth events, post-create, media-finalize, feed reads (cached vs uncached), admin actions  *(partial: Serilog console+file configured in `Program.cs`; no per-event structured logging yet)*
+- [~] 12.2 Confirm rate-limit policies on every anonymous endpoint (`/auth/*`, `/contact`); add per-user rate limit on `/api/media/uploads` (max 20/hour)  *(partial: `RateLimitPolicies.Auth` on `/api/auth/*`, `RateLimitPolicies.Upload` on avatar/post uploads; `/contact` + `/api/media/uploads` not built)*
 - [ ] 12.3 Verify signed-URL upload buckets are private (no public list/get); CDN delivery uses signed read URLs or public read with random keys
 - [ ] 12.4 Add an Admin → Maintenance action that resets a user's password (escape hatch for OQ — broken email inbox)
 - [ ] 12.5 Resolve open questions OQ1 (R2 vs S3), OQ3 (video length cap), OQ4 (comment depth = 1), OQ5 (Turnstile), OQ6 (manual badge), **OQ7 (sensitive-veil session vs device persistence), OQ8 (broadcast audience selectors), OQ9 (analytics retention)** with stakeholders; update specs/design only if decisions change
